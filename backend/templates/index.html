@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ITENARY - Travel Itinerary Generator</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <!-- Header with Logo, Navigation, and Search Bar -->
+    <header>
+        <div class="header-content">
+            <!-- Logo and App Name -->
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+
+            <!-- Search Bar -->
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+
+            <!-- User Profile/Login -->
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="container">
+            <h2>Plan Your Perfect Trip</h2>
+            <!-- Step 1: Destination -->
+            <div class="step" id="step1">
+                <label for="destination">Where do you want to go?</label>
+                <input type="text" id="destination" placeholder="Enter your destination">
+                <button type="button" onclick="nextStep()">Next</button>
+            </div>
+
+            <!-- Step 2: Budget -->
+            <div class="step" id="step2" style="display: none;">
+                <label for="budget">What's your budget?</label>
+                <input type="text" id="budget" placeholder="Enter your budget">
+                <button type="button" onclick="prevStep()">Back</button>
+                <button type="button" onclick="nextStep()">Next</button>
+            </div>
+
+            <!-- Step 3: Duration -->
+            <div class="step" id="step3" style="display: none;">
+                <label for="duration">How long will your trip be?</label>
+                <input type="text" id="duration" placeholder="Enter number of days">
+                <button type="button" onclick="prevStep()">Back</button>
+                <button type="button" onclick="nextStep()">Next</button>
+            </div>
+
+            <!-- Step 4: Purpose -->
+            <div class="step" id="step4" style="display: none;">
+                <label for="purpose">What's the purpose of your trip?</label>
+                <select id="purpose">
+                    <option value="Leisure">Leisure</option>
+                    <option value="Business">Business</option>
+                    <option value="Adventure">Adventure</option>
+                    <option value="Family Time">Family Time</option>
+                    <option value="Romantic Getaway">Romantic Getaway</option>
+                    <option value="Cultural Exploration">Cultural Exploration</option>
+                </select>
+                <button type="button" onclick="prevStep()">Back</button>
+                <button type="button" onclick="nextStep()">Next</button>
+            </div>
+
+            <!-- Step 5: Preferences -->
+            <div class="step" id="step5" style="display: none;">
+                <label>Any specific preferences? (Select one or more)</label>
+                <div class="preference-buttons">
+                    <button type="button" class="preference-btn" data-value="Hiking">Hiking</button>
+                    <button type="button" class="preference-btn" data-value="Museums">Museums</button>
+                    <button type="button" class="preference-btn" data-value="Food Tours">Food Tours</button>
+                    <button type="button" class="preference-btn" data-value="Beaches">Beaches</button>
+                    <button type="button" class="preference-btn" data-value="Shopping">Shopping</button>
+                    <button type="button" class="preference-btn" data-value="Nightlife">Nightlife</button>
+                    <button type="button" class="preference-btn" data-value="Historical Sites">Historical Sites</button>
+                    <button type="button" class="preference-btn" data-value="Adventure Sports">Adventure Sports</button>
+                    <button type="button" class="preference-btn" data-value="Relaxation">Relaxation</button>
+                    <button type="button" class="preference-btn" data-value="Photography">Photography</button>
+                </div>
+                <button type="button" onclick="prevStep()">Back</button>
+                <button type="button" id="generateBtn">Generate Itinerary</button>
+            </div>
+        </div>
+
+        <!-- Itinerary Display Section -->
+        <div id="itinerary" class="container" style="display: none;">
+            <h2>Your Personalized Itinerary</h2>
+            <div id="itinerary-content" class="itinerary-content"></div>
+            <!-- Share Button -->
+            <button type="button" id="shareBtn">Share Itinerary</button>
+        </div>
+    </div>
+    <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+</body>
+</html>

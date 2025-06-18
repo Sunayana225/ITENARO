@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ post.title }} - ITENARY Blog</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="article-container">
+            <h1 class="article-title">{{ post.title }}</h1>
+            <div class="article-meta">
+                <span>By <b>{{ post.author }}</b></span>
+                <span>&bull; {{ post.date_posted }}</span>
+                <span>&bull; {{ post.location }}{% if post.country %}, {{ post.country }}{% endif %}{% if post.state %}, {{ post.state }}{% endif %}</span>
+                {% if post.category %}<span class="category-tag">{{ post.category }}</span>{% endif %}
+            </div>
+            {% if post.image %}
+                <img src="{{ post.image }}" alt="{{ post.title }}" class="article-image">
+            {% endif %}
+            <div class="article-content">
+                <p>{{ post.content }}</p>
+            </div>
+            <div class="tags">
+                {% for tag in post.tags %}
+                    <span class="tag">{{ tag }}</span>
+                {% endfor %}
+            </div>
+            <button id="inspireBtn" class="inspire-btn"
+                onclick="window.location.href='/?inspire=1&destination={{ post.location|urlencode }}&country={{ post.country|urlencode }}&state={{ post.state|urlencode }}&category={{ post.category|urlencode }}'">
+                Use as Inspiration
+            </button>
+            <a href="{{ url_for('blog') }}" class="back-to-blog">&larr; Back to Blog</a>
+
+            <section class="comments-section">
+                <h2>Comments</h2>
+                {% if comments %}
+                    {% for comment in comments %}
+                    <div class="comment">
+                        <div class="comment-meta">
+                            <b>{{ comment['author'] }}</b> <span class="comment-date">{{ comment['date_posted'] }}</span>
+                        </div>
+                        <div class="comment-content">{{ comment['content'] }}</div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="no-comments">No comments yet. Be the first to comment!</p>
+                {% endif %}
+
+                <div class="add-comment">
+                    <h3>Add a Comment</h3>
+                    <form action="{{ url_for('add_comment', post_id=post['id']) }}" method="POST" class="comment-form">
+                        <textarea name="content" placeholder="Your Comment" rows="4" required></textarea>
+                        <input type="text" name="author" placeholder="Your Name" required>
+                        <button type="submit">Submit Comment</button>
+                    </form>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

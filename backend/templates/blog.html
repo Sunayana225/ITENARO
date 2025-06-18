@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog - ITENARY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <!-- Logo and App Name -->
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <!-- Navigation Links -->
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <!-- Search Bar -->
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <!-- User Profile/Login -->
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <div class="container">
+            <div class="explore-header">
+                <h2 class="explore-title">Explore Articles</h2>
+                <button id="addArticleBtn" class="add-article-btn">+ Write your own</button>
+            </div>
+
+            <!-- Filters -->
+            <div class="blog-filters">
+                <select id="countryFilter">
+                    <option value="">All Countries</option>
+                    {% for country in countries %}
+                        <option value="{{ country }}">{{ country }}</option>
+                    {% endfor %}
+                </select>
+                <select id="stateFilter">
+                    <option value="">All States</option>
+                    {% for state in states %}
+                        <option value="{{ state }}">{{ state }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Blog Post Form Modal -->
+            <div id="blogFormModal" class="modal">
+                <div class="modal-content">
+                    <span class="close-modal" id="closeModalBtn">&times;</span>
+                    <div class="blog-form">
+                        <h3>Share Your Travel Experience</h3>
+                        <form action="/post-blog" method="POST" enctype="multipart/form-data">
+                            <input type="text" name="title" placeholder="Give your blog a catchy title..." required>
+                            <textarea name="content" placeholder="Share your travel story, tips, and experiences..." rows="10" required></textarea>
+                            <div class="form-row">
+                                <input type="text" name="author" placeholder="Your Name" required>
+                                <input type="text" name="location" placeholder="City" required>
+                            </div>
+                            <div class="form-row">
+                                <input type="text" name="country" placeholder="Country" required>
+                                <input type="text" name="state" placeholder="State" required>
+                            </div>
+                            <div class="form-row">
+                                <input type="file" name="image" accept="image/*" placeholder="Add a cover image">
+                                <select name="category" required>
+                                    <option value="">Select Category</option>
+                                    <option value="adventure">Adventure</option>
+                                    <option value="culture">Culture & Heritage</option>
+                                    <option value="food">Food & Cuisine</option>
+                                    <option value="nature">Nature & Wildlife</option>
+                                    <option value="urban">Urban Exploration</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <input type="text" name="tags" placeholder="Add tags (comma separated)">
+                            </div>
+                            <button type="submit">Share Your Story</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Blog Posts Grid -->
+            {% if posts|length == 0 %}
+                <div class="no-blogs-message">No blogs yet. Be the first to share your travel story!</div>
+            {% endif %}
+            <div class="blog-posts-grid" id="blogPosts">
+                {% for post in posts %}
+                <a href="{{ url_for('blog_post', post_id=post['id']) }}" class="blog-post-card-link">
+                <div class="blog-post-card blog-post" data-country="{{ post['country'] }}" data-state="{{ post['state'] }}">
+                    <img src="{{ post.image or url_for('static', filename='images/default_blog.jpg') }}"
+                         alt="{{ post.title }}"
+                         class="blog-image"
+                         onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/default_blog.jpg') }}';">
+                    <h3 class="blog-card-title">{{ post['title'] }}</h3>
+                    <div class="blog-card-meta">
+                        <span class="author">By {{ post['author'] }}</span> |
+                        <span class="date">{{ post['date_posted'] }}</span> |
+                        <span class="location">{{ post['location'] }}</span> |
+                        <span class="country">{{ post['country'] }}</span>{% if post['state'] %}, <span class="state">{{ post['state'] }}</span>{% endif %}
+                    </div>
+                    <div class="blog-card-summary">{{ post['content'][:120] }}{% if post['content']|length > 120 %}...{% endif %}</div>
+                </div>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='JS scripts/blog.js') }}"></script>
+</body>
+</html>
