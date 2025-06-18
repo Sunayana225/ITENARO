@@ -3,14 +3,15 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getAuth } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 // Your web app's Firebase configuration
+// IMPORTANT: Replace these with your actual Firebase config values
 const firebaseConfig = {
-    apiKey: "AIzaSyA9_HiVzTQNxTYWcf0I_p6ZztGVNIJwHbU",
-    authDomain: "realestate-456c4.firebaseapp.com",
-    projectId: "realestate-456c4",
-    storageBucket: "realestate-456c4.firebasestorage.app",
-    messagingSenderId: "628551361975",
-    appId: "1:628551361975:web:b1b142fc82678d11af3432",
-    measurementId: "G-VT0F7YRT1H"
+    apiKey: "YOUR_FIREBASE_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.firebasestorage.app",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID",
+    measurementId: "YOUR_MEASUREMENT_ID"
 };
 
 // Initialize Firebase
