@@ -1,0 +1,1457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - ITENARO</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        .profile-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f7fa;
+            min-height: 100vh;
+            padding-top: 100px; /* Add space for fixed header */
+        }
+
+        .profile-layout {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 30px;
+        }
+
+        /* Left Profile Card */
+        .profile-card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            height: fit-content;
+            text-align: center;
+        }
+
+        .profile-avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: #ff7f50;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            font-weight: bold;
+            margin: 0 auto 20px;
+            color: white;
+            border: 4px solid #fff;
+            box-shadow: 0 4px 15px rgba(255,127,80,0.3);
+        }
+
+        .profile-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .profile-title {
+            color: #7f8c8d;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .profile-location {
+            color: #95a5a6;
+            font-size: 14px;
+            margin-bottom: 25px;
+        }
+
+        .profile-actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .profile-btn {
+            flex: 1;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .profile-btn.primary {
+            background: #ff7f50;
+            color: white;
+        }
+
+        .profile-btn.primary:hover {
+            background: #ff5733;
+        }
+
+        .profile-btn.secondary {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+
+        .profile-btn.secondary:hover {
+            background: #d5dbdb;
+        }
+
+        .profile-links {
+            text-align: left;
+        }
+
+        .profile-link {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid #ecf0f1;
+            text-decoration: none;
+            color: #2c3e50;
+            transition: color 0.3s ease;
+        }
+
+        .profile-link:hover {
+            color: #ff7f50;
+        }
+
+        .profile-link:last-child {
+            border-bottom: none;
+        }
+
+        .profile-link-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        /* Right Content Area */
+        .content-area {
+            display: grid;
+            gap: 30px;
+        }
+
+        .section-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .edit-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            font-weight: 600;
+        }
+
+        .edit-btn:hover {
+            background: #2980b9;
+        }
+
+        /* Info Grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .info-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #7f8c8d;
+        }
+
+        .info-value {
+            font-size: 16px;
+            color: #2c3e50;
+            font-weight: 500;
+        }
+
+
+
+        /* Wishlist Styles */
+        .wishlist-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .wishlist-item {
+            border: 1px solid #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .wishlist-item:hover {
+            border-color: #ff7f50;
+            box-shadow: 0 4px 15px rgba(255,127,80,0.1);
+        }
+
+        .wishlist-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+
+        .wishlist-item-content {
+            padding: 20px;
+        }
+
+        .priority-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .priority-high {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .priority-medium {
+            background: #f39c12;
+            color: white;
+        }
+
+        .priority-low {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .remove-wishlist {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+
+        .remove-wishlist:hover {
+            background: #c0392b;
+        }
+
+        .empty-wishlist {
+            text-align: center;
+            padding: 40px 20px;
+            color: #7f8c8d;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            position: relative;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .modal-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #7f8c8d;
+            padding: 5px;
+            border-radius: 50%;
+            width: 35px;
+            height: 35px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-btn:hover {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ecf0f1;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #ff7f50;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 15px;
+            justify-content: flex-end;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #ff7f50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #ff5733;
+        }
+
+        .btn-secondary {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+
+        .btn-secondary:hover {
+            background: #d5dbdb;
+        }
+
+        /* Wishlist Management Styles */
+        .wishlist-actions {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .add-destination-btn {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .add-destination-btn:hover {
+            background: #219a52;
+        }
+
+        .destinations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .destination-card {
+            border: 1px solid #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .destination-card:hover {
+            border-color: #ff7f50;
+            box-shadow: 0 4px 15px rgba(255,127,80,0.1);
+        }
+
+        .destination-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .destination-card-content {
+            padding: 15px;
+        }
+
+        .destination-card h4 {
+            margin: 0 0 8px 0;
+            color: #2c3e50;
+            font-size: 16px;
+        }
+
+        .destination-card p {
+            margin: 5px 0;
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+
+        .destination-card .rating {
+            color: #f39c12;
+            font-weight: 600;
+        }
+
+        .add-to-wishlist-btn {
+            width: 100%;
+            background: #ff7f50;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background 0.3s ease;
+        }
+
+        .add-to-wishlist-btn:hover:not(:disabled) {
+            background: #ff5733;
+        }
+
+        .add-to-wishlist-btn:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 1024px) {
+            .profile-container {
+                padding: 15px;
+                padding-top: 80px;
+            }
+
+            .profile-layout {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .wishlist-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .section-card {
+                padding: 20px;
+            }
+
+            .section-title {
+                font-size: 18px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .profile-container {
+                padding: 10px;
+                padding-top: 70px;
+            }
+
+            .profile-card {
+                padding: 20px;
+            }
+
+            .profile-actions {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .section-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+        }
+        .wishlist-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .wishlist-item {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+        .wishlist-item:hover {
+            transform: translateY(-5px);
+        }
+        .wishlist-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+        .wishlist-item-content {
+            padding: 20px;
+        }
+        .wishlist-item h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .wishlist-item p {
+            color: #666;
+            margin: 0 0 15px 0;
+            font-size: 14px;
+        }
+        .priority-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .priority-high { background: #ff4757; color: white; }
+        .priority-medium { background: #ffa502; color: white; }
+        .priority-low { background: #2ed573; color: white; }
+        .remove-wishlist {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .remove-wishlist:hover {
+            background: #ff3742;
+        }
+        .profile-form {
+            display: grid;
+            gap: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        .form-group input, .form-group textarea, .form-group select {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+            outline: none;
+            border-color: #ff7f50;
+        }
+        .save-profile-btn {
+            background: #ff7f50;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        .save-profile-btn:hover {
+            background: #ff5733;
+        }
+        .empty-wishlist {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .empty-wishlist i {
+            font-size: 64px;
+            color: #ddd;
+            margin-bottom: 20px;
+        }
+        .add-to-wishlist-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .destinations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .destination-mini-card {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease;
+        }
+        .destination-mini-card:hover {
+            transform: scale(1.02);
+        }
+        .destination-mini-card img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+        }
+        .destination-mini-card-content {
+            padding: 15px;
+        }
+        .destination-mini-card h4 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #333;
+        }
+        .destination-mini-card p {
+            margin: 0 0 10px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        .add-to-wishlist-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            width: 100%;
+        }
+        .add-to-wishlist-btn:hover {
+            background: #218838;
+        }
+        .add-to-wishlist-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <div class="profile">
+                <!-- Firebase auth will update this -->
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="profile-container">
+            <!-- Loading State -->
+            <div id="loadingState" class="profile-header" style="text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 20px;">⏳</div>
+                <h1>Loading Profile...</h1>
+                <p>Please wait while we verify your authentication...</p>
+            </div>
+
+            <!-- Profile Content (hidden initially) -->
+            <div id="profileContent" style="display: none;">
+                <div class="profile-layout">
+                    <!-- Left Profile Card -->
+                    <div class="profile-card">
+                        <div class="profile-avatar" id="profileAvatar">U</div>
+                        <div class="profile-name" id="profileName">Loading...</div>
+                        <div class="profile-title" id="profileTitle">Travel Enthusiast</div>
+                        <div class="profile-location" id="profileLocation">Bay Area, San Francisco, CA</div>
+
+                        <div class="profile-actions">
+                            <button class="profile-btn primary" onclick="editProfile()">Edit</button>
+                            <button class="profile-btn secondary" onclick="shareProfile()">Message</button>
+                        </div>
+
+                        <div class="profile-links">
+                            <a href="#" class="profile-link">
+                                <div class="profile-link-icon">🌐</div>
+                                <span id="profileWebsite">https://itenaro.com</span>
+                            </a>
+                            <a href="#" class="profile-link">
+                                <div class="profile-link-icon">📧</div>
+                                <span id="profileEmail">Loading...</span>
+                            </a>
+                            <a href="#" class="profile-link">
+                                <div class="profile-link-icon">📱</div>
+                                <span id="profilePhone">(234) 816-9479</span>
+                            </a>
+                            <a href="#" class="profile-link">
+                                <div class="profile-link-icon">📍</div>
+                                <span id="profileAddress">Bay Area, San Francisco, CA</span>
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Right Content Area -->
+                    <div class="content-area">
+                        <!-- Personal Information Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">Personal Information</div>
+                                <button class="edit-btn" onclick="editPersonalInfo()">Edit</button>
+                            </div>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <div class="info-label">Full Name</div>
+                                    <div class="info-value" id="fullName">Kenneth Valdez</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Email</div>
+                                    <div class="info-value" id="emailInfo">fip@jojemuk.al</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Phone</div>
+                                    <div class="info-value" id="phoneInfo">(234) 816-9479</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Mobile</div>
+                                    <div class="info-value" id="mobileInfo">(234) 380-4739</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Address</div>
+                                    <div class="info-value" id="addressInfo">Bay Area, San Francisco, CA</div>
+                                </div>
+                                <div class="info-item">
+                                    <div class="info-label">Member Since</div>
+                                    <div class="info-value" id="memberSince">Loading...</div>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <!-- Wishlist Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">My Travel Wishlist</div>
+                                <button class="edit-btn" onclick="manageWishlist()">Manage</button>
+                            </div>
+                            <div id="wishlistContainer">
+                                <div class="empty-wishlist">
+                                    <div style="font-size: 64px; margin-bottom: 20px;">❤️</div>
+                                    <h3>Your wishlist is empty</h3>
+                                    <p>Start adding destinations you'd love to visit!</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div> <!-- End profileContent -->
+
+            <!-- Edit Personal Information Modal -->
+            <div id="editPersonalModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Edit Personal Information</h2>
+                        <button class="close-btn" onclick="closeModal('editPersonalModal')">&times;</button>
+                    </div>
+                    <form id="personalInfoForm">
+                        <div class="form-group">
+                            <label for="editFullName">Full Name</label>
+                            <input type="text" id="editFullName" name="fullName" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="editPhone">Phone</label>
+                            <input type="tel" id="editPhone" name="phone">
+                        </div>
+                        <div class="form-group">
+                            <label for="editMobile">Mobile</label>
+                            <input type="tel" id="editMobile" name="mobile">
+                        </div>
+                        <div class="form-group">
+                            <label for="editAddress">Address</label>
+                            <input type="text" id="editAddress" name="address">
+                        </div>
+                        <div class="form-group">
+                            <label for="editWebsite">Website</label>
+                            <input type="url" id="editWebsite" name="website">
+                        </div>
+                        <div class="form-group">
+                            <label for="editBio">Bio</label>
+                            <textarea id="editBio" name="bio" rows="4" placeholder="Tell us about yourself and your travel interests..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="editTravelStyle">Travel Style</label>
+                            <select id="editTravelStyle" name="travelStyle">
+                                <option value="">Select your travel style</option>
+                                <option value="adventure">Adventure Seeker</option>
+                                <option value="luxury">Luxury Traveler</option>
+                                <option value="budget">Budget Explorer</option>
+                                <option value="cultural">Cultural Enthusiast</option>
+                                <option value="relaxation">Relaxation Focused</option>
+                                <option value="family">Family Traveler</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal('editPersonalModal')">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Manage Wishlist Modal -->
+            <div id="manageWishlistModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Manage Wishlist</h2>
+                        <button class="close-btn" onclick="closeModal('manageWishlistModal')">&times;</button>
+                    </div>
+                    <div class="wishlist-actions">
+                        <button class="add-destination-btn" onclick="showAddDestinations()">Add New Destination</button>
+                    </div>
+                    <div id="wishlistManagementContainer">
+                        <!-- Current wishlist items will be loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Add Destinations Modal -->
+            <div id="addDestinationsModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Add Destinations to Wishlist</h2>
+                        <button class="close-btn" onclick="closeModal('addDestinationsModal')">&times;</button>
+                    </div>
+                    <div id="availableDestinationsContainer">
+                        <!-- Available destinations will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Firebase Authentication Script -->
+    <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+    <script type="module">
+        import { onAuthStateChange } from "{{ url_for('static', filename='scripts/firebase-auth.js') }}";
+
+        let currentUser = null;
+        let userProfile = null;
+        let userWishlist = [];
+        let availableDestinations = [];
+
+        // Modal management functions
+        window.openModal = function(modalId) {
+            document.getElementById(modalId).style.display = 'block';
+            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        };
+
+        window.closeModal = function(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+            document.body.style.overflow = 'auto'; // Restore scrolling
+        };
+
+        // Profile functions
+        window.editProfile = function() {
+            // This could open a profile picture upload modal in the future
+            alert('Profile picture editing - to be implemented');
+        };
+
+        window.shareProfile = function() {
+            // Copy profile link to clipboard
+            const profileUrl = window.location.href;
+            navigator.clipboard.writeText(profileUrl).then(() => {
+                showMessage('Profile link copied to clipboard!', 'success');
+            }).catch(() => {
+                showMessage('Could not copy profile link', 'error');
+            });
+        };
+
+        window.editPersonalInfo = function() {
+            // Populate the form with current data
+            if (userProfile) {
+                document.getElementById('editFullName').value = userProfile.display_name || '';
+                document.getElementById('editBio').value = userProfile.bio || '';
+
+                // Parse travel preferences if they exist
+                if (userProfile.travel_preferences) {
+                    try {
+                        const prefs = JSON.parse(userProfile.travel_preferences);
+                        document.getElementById('editTravelStyle').value = prefs.travel_style || '';
+                        document.getElementById('editPhone').value = prefs.phone || '';
+                        document.getElementById('editMobile').value = prefs.mobile || '';
+                        document.getElementById('editAddress').value = prefs.address || '';
+                        document.getElementById('editWebsite').value = prefs.website || '';
+                    } catch (e) {
+                        console.error('Error parsing travel preferences:', e);
+                    }
+                }
+            }
+            openModal('editPersonalModal');
+        };
+
+        window.manageWishlist = function() {
+            loadWishlistForManagement();
+            openModal('manageWishlistModal');
+        };
+
+        window.showAddDestinations = function() {
+            closeModal('manageWishlistModal');
+            loadAvailableDestinations();
+            openModal('addDestinationsModal');
+        };
+
+        // Initialize when user is authenticated
+        onAuthStateChange(async (user) => {
+            if (user) {
+                currentUser = user;
+                // Hide loading state and show profile content
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('profileContent').style.display = 'block';
+                await initializeProfile(user);
+            } else {
+                // Show loading for a moment then redirect
+                setTimeout(() => {
+                    window.location.href = '/login';
+                }, 1000);
+            }
+        });
+
+        async function initializeProfile(user) {
+            // Update profile header
+            const firstLetter = user.email.charAt(0).toUpperCase();
+            document.getElementById('profileAvatar').textContent = firstLetter;
+            document.getElementById('profileEmail').textContent = user.email;
+
+            // Update member since date
+            const memberSince = new Date(user.metadata.creationTime).toLocaleDateString();
+            document.getElementById('memberSince').textContent = memberSince;
+
+            // Update email in multiple places
+            document.getElementById('emailInfo').textContent = user.email;
+
+            // Load user profile data
+            await loadUserProfile(user.uid);
+
+            // Load wishlist
+            await loadWishlist();
+        }
+
+        async function loadUserProfile(uid) {
+            try {
+                const response = await fetch(`/api/profile/${uid}`);
+                if (response.ok) {
+                    userProfile = await response.json();
+                    populateProfileForm();
+                } else {
+                    // Create new profile
+                    await createUserProfile(uid);
+                }
+            } catch (error) {
+                console.error('Error loading profile:', error);
+            }
+        }
+
+        async function createUserProfile(uid) {
+            try {
+                const response = await fetch('/api/profile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        firebase_uid: uid,
+                        email: currentUser.email,
+                        display_name: currentUser.displayName || currentUser.email.split('@')[0]
+                    })
+                });
+
+                if (response.ok) {
+                    userProfile = await response.json();
+                    populateProfileForm();
+                }
+            } catch (error) {
+                console.error('Error creating profile:', error);
+            }
+        }
+
+        function populateProfileForm() {
+            if (userProfile) {
+                const displayName = userProfile.display_name || currentUser.email.split('@')[0];
+
+                // Update profile name in multiple places
+                document.getElementById('profileName').textContent = displayName;
+                document.getElementById('fullName').textContent = displayName;
+
+                // Update form fields if they exist
+                const displayNameInput = document.getElementById('displayName');
+                const bioInput = document.getElementById('bio');
+                const travelStyleSelect = document.getElementById('travelStyle');
+
+                if (displayNameInput) displayNameInput.value = userProfile.display_name || '';
+                if (bioInput) bioInput.value = userProfile.bio || '';
+
+                if (userProfile.travel_preferences && travelStyleSelect) {
+                    try {
+                        const prefs = JSON.parse(userProfile.travel_preferences);
+                        travelStyleSelect.value = prefs.travel_style || '';
+                    } catch (e) {
+                        console.error('Error parsing travel preferences:', e);
+                    }
+                }
+            }
+        }
+
+        // Personal Information form submission
+        document.addEventListener('DOMContentLoaded', function() {
+            const personalInfoForm = document.getElementById('personalInfoForm');
+            if (personalInfoForm) {
+                personalInfoForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+
+                    const formData = new FormData(e.target);
+                    const profileData = {
+                        display_name: formData.get('fullName'),
+                        bio: formData.get('bio'),
+                        travel_preferences: JSON.stringify({
+                            travel_style: formData.get('travelStyle'),
+                            phone: formData.get('phone'),
+                            mobile: formData.get('mobile'),
+                            address: formData.get('address'),
+                            website: formData.get('website')
+                        })
+                    };
+
+                    try {
+                        const response = await fetch(`/api/profile/${currentUser.uid}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(profileData)
+                        });
+
+                        if (response.ok) {
+                            userProfile = await response.json();
+                            populateProfileForm(); // Refresh all profile data
+                            updateProfileDisplay(); // Update the display
+                            closeModal('editPersonalModal');
+                            showMessage('Profile updated successfully!', 'success');
+                        } else {
+                            showMessage('Error updating profile', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Error updating profile:', error);
+                        showMessage('Error updating profile', 'error');
+                    }
+                });
+            }
+        });
+
+        function updateProfileDisplay() {
+            if (userProfile) {
+                const displayName = userProfile.display_name || currentUser.email.split('@')[0];
+                document.getElementById('profileName').textContent = displayName;
+                document.getElementById('fullName').textContent = displayName;
+
+                // Update other fields if they exist in travel_preferences
+                if (userProfile.travel_preferences) {
+                    try {
+                        const prefs = JSON.parse(userProfile.travel_preferences);
+                        if (prefs.phone) document.getElementById('phoneInfo').textContent = prefs.phone;
+                        if (prefs.mobile) document.getElementById('mobileInfo').textContent = prefs.mobile;
+                        if (prefs.address) document.getElementById('addressInfo').textContent = prefs.address;
+                        if (prefs.website) document.getElementById('profileWebsite').textContent = prefs.website;
+                    } catch (e) {
+                        console.error('Error parsing travel preferences:', e);
+                    }
+                }
+            }
+        }
+
+        function loadWishlistForManagement() {
+            const container = document.getElementById('wishlistManagementContainer');
+
+            if (userWishlist.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-wishlist">
+                        <div style="font-size: 48px; margin-bottom: 15px;">❤️</div>
+                        <h3>Your wishlist is empty</h3>
+                        <p>Click "Add New Destination" to start building your wishlist!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const wishlistHTML = `
+                <div class="wishlist-grid">
+                    ${userWishlist.map(item => `
+                        <div class="wishlist-item">
+                            <img src="${item.image_url}" alt="${item.name}" onerror="this.src='/static/images/placeholder.jpg'">
+                            <div class="wishlist-item-content">
+                                <div class="priority-badge priority-${getPriorityText(item.priority)}">
+                                    ${getPriorityText(item.priority).toUpperCase()} PRIORITY
+                                </div>
+                                <h3>${item.name}</h3>
+                                <p>${item.description}</p>
+                                <p><strong>Location:</strong> ${item.location}, ${item.country}</p>
+                                <p><strong>Rating:</strong> ⭐ ${item.rating}/5</p>
+                                ${item.notes ? `<p><strong>Notes:</strong> ${item.notes}</p>` : ''}
+                                <p><small>Added: ${new Date(item.added_at).toLocaleDateString()}</small></p>
+                                <button class="remove-wishlist" onclick="removeFromWishlistModal(${item.destination_id})">
+                                    Remove from Wishlist
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            container.innerHTML = wishlistHTML;
+        }
+
+        window.removeFromWishlistModal = async function(destinationId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    await loadWishlist();
+                    loadWishlistForManagement(); // Refresh modal content
+                    showMessage('Removed from wishlist!', 'success');
+                } else {
+                    showMessage('Error removing from wishlist', 'error');
+                }
+            } catch (error) {
+                console.error('Error removing from wishlist:', error);
+                showMessage('Error removing from wishlist', 'error');
+            }
+        };
+
+        async function loadWishlist() {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/wishlist/${currentUser.uid}`);
+                if (response.ok) {
+                    userWishlist = await response.json();
+                    displayWishlist();
+                }
+            } catch (error) {
+                console.error('Error loading wishlist:', error);
+            }
+        }
+
+        function displayWishlist() {
+            const container = document.getElementById('wishlistContainer');
+
+            if (userWishlist.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-wishlist">
+                        <div style="font-size: 64px; margin-bottom: 20px;">❤️</div>
+                        <h3>Your wishlist is empty</h3>
+                        <p>Start adding destinations you'd love to visit!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const wishlistHTML = `
+                <div class="wishlist-grid">
+                    ${userWishlist.map(item => `
+                        <div class="wishlist-item">
+                            <img src="${item.image_url}" alt="${item.name}" onerror="this.src='/static/images/placeholder.jpg'">
+                            <div class="wishlist-item-content">
+                                <div class="priority-badge priority-${getPriorityText(item.priority)}">
+                                    ${getPriorityText(item.priority).toUpperCase()} PRIORITY
+                                </div>
+                                <h3>${item.name}</h3>
+                                <p>${item.description}</p>
+                                <p><strong>Location:</strong> ${item.location}, ${item.country}</p>
+                                <p><strong>Rating:</strong> ⭐ ${item.rating}/5</p>
+                                ${item.notes ? `<p><strong>Notes:</strong> ${item.notes}</p>` : ''}
+                                <p><small>Added: ${new Date(item.added_at).toLocaleDateString()}</small></p>
+                                <button class="remove-wishlist" onclick="removeFromWishlist(${item.destination_id})">
+                                    Remove from Wishlist
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+
+            container.innerHTML = wishlistHTML;
+        }
+
+        function getPriorityText(priority) {
+            switch(priority) {
+                case 3: return 'high';
+                case 2: return 'medium';
+                case 1: return 'low';
+                default: return 'low';
+            }
+        }
+
+        async function loadAvailableDestinations() {
+            try {
+                const response = await fetch('/api/destinations');
+                if (response.ok) {
+                    availableDestinations = await response.json();
+                    displayAvailableDestinations();
+                }
+            } catch (error) {
+                console.error('Error loading destinations:', error);
+            }
+        }
+
+        function displayAvailableDestinations() {
+            const container = document.getElementById('availableDestinationsContainer');
+            const wishlistDestinationIds = userWishlist.map(item => item.destination_id);
+
+            if (availableDestinations.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-wishlist">
+                        <div style="font-size: 48px; margin-bottom: 15px;">🏝️</div>
+                        <h3>No destinations available</h3>
+                        <p>Check back later for new destinations to add to your wishlist!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const destinationsHTML = `
+                <div class="destinations-grid">
+                    ${availableDestinations.map(dest => {
+                        const isInWishlist = wishlistDestinationIds.includes(dest.id);
+                        return `
+                            <div class="destination-card">
+                                <img src="${dest.image_url}" alt="${dest.name}" onerror="this.src='/static/images/placeholder.jpg'">
+                                <div class="destination-card-content">
+                                    <h4>${dest.name}</h4>
+                                    <p>${dest.description.substring(0, 80)}...</p>
+                                    <p><strong>${dest.location}, ${dest.country}</strong></p>
+                                    <p class="rating">⭐ ${dest.rating}/5</p>
+                                    <button class="add-to-wishlist-btn"
+                                            onclick="addToWishlistFromModal(${dest.id})"
+                                            ${isInWishlist ? 'disabled' : ''}>
+                                        ${isInWishlist ? 'Already in Wishlist' : 'Add to Wishlist'}
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            container.innerHTML = destinationsHTML;
+        }
+
+        window.addToWishlistFromModal = async function(destinationId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch('/api/wishlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_uid: currentUser.uid,
+                        destination_id: destinationId,
+                        priority: 2 // Default to medium priority
+                    })
+                });
+
+                if (response.ok) {
+                    await loadWishlist();
+                    displayAvailableDestinations(); // Refresh modal content
+                    showMessage('Added to wishlist!', 'success');
+                } else {
+                    showMessage('Error adding to wishlist', 'error');
+                }
+            } catch (error) {
+                console.error('Error adding to wishlist:', error);
+                showMessage('Error adding to wishlist', 'error');
+            }
+        };
+
+        window.addToWishlist = async function(destinationId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch('/api/wishlist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_uid: currentUser.uid,
+                        destination_id: destinationId,
+                        priority: 2 // Default to medium priority
+                    })
+                });
+
+                if (response.ok) {
+                    await loadWishlist();
+                    displayAvailableDestinations(); // Refresh to update button states
+                    showMessage('Added to wishlist!', 'success');
+                } else {
+                    showMessage('Error adding to wishlist', 'error');
+                }
+            } catch (error) {
+                console.error('Error adding to wishlist:', error);
+                showMessage('Error adding to wishlist', 'error');
+            }
+        };
+
+        window.removeFromWishlist = async function(destinationId) {
+            if (!currentUser) return;
+
+            try {
+                const response = await fetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    await loadWishlist();
+                    displayAvailableDestinations(); // Refresh to update button states
+                    showMessage('Removed from wishlist!', 'success');
+                } else {
+                    showMessage('Error removing from wishlist', 'error');
+                }
+            } catch (error) {
+                console.error('Error removing from wishlist:', error);
+                showMessage('Error removing from wishlist', 'error');
+            }
+        };
+
+        function showMessage(message, type) {
+            // Create flash message
+            const flashDiv = document.createElement('div');
+            flashDiv.className = `flash ${type === 'success' ? 'success' : 'danger'}`;
+            flashDiv.textContent = message;
+            flashDiv.style.position = 'fixed';
+            flashDiv.style.top = '20px';
+            flashDiv.style.right = '20px';
+            flashDiv.style.zIndex = '9999';
+            flashDiv.style.padding = '15px 20px';
+            flashDiv.style.borderRadius = '8px';
+            flashDiv.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+
+            document.body.appendChild(flashDiv);
+
+            setTimeout(() => {
+                flashDiv.remove();
+            }, 3000);
+        }
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                    document.body.style.overflow = 'auto';
+                }
+            });
+        });
+
+        // Close modal with Escape key
+        window.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const openModal = document.querySelector('.modal[style*="block"]');
+                if (openModal) {
+                    openModal.style.display = 'none';
+                    document.body.style.overflow = 'auto';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

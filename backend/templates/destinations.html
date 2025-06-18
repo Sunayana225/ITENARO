@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Destinations - ITENARY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations" class="active">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    <!-- Destinations Content -->
+    <div class="container">
+        <h2>Explore Our Top Destinations</h2>
+
+        <!-- Search Bar -->
+        <div class="search-bar" style="position: relative;">
+            <input type="text" id="search" placeholder="Search for a destination..." autocomplete="off">
+            <div id="searchDropdown" class="search-dropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #ccc; z-index:10;"></div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters">
+            <button class="filter-btn active" onclick="filterDestinations('all')">All</button>
+            <button class="filter-btn" onclick="filterDestinations('adventure')">Adventure</button>
+            <button class="filter-btn" onclick="filterDestinations('beach')">Beach</button>
+            <button class="filter-btn" onclick="filterDestinations('historical')">Historical</button>
+            <button class="filter-btn" onclick="filterDestinations('luxury')">Luxury</button>
+        </div>
+
+        <!-- Destinations Grid -->
+        <div class="destinations-grid" id="destinationsGrid">
+            <!-- Destinations will be loaded dynamically -->
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='scripts/destinations.js') }}"></script>
+</body>
+</html>

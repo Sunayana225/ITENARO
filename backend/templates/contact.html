@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Us - ITENARY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARY</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="#">Destinations</a></li>
+                    <li><a href="#">Blog</a></li>
+                    <li><a href="/contact" class="active">Contact</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="contact-container">
+        <h2>Contact Us</h2>
+        <p>We’d love to hear from you! Reach out with any questions, feedback, or inquiries.</p>
+
+        <div class="contact-wrapper">
+            <!-- Contact Form -->
+            <form class="contact-form">
+                <div class="input-group">
+                    <input type="text" id="name" name="name" placeholder="Your Name" required>
+                </div>
+                <div class="input-group">
+                    <input type="email" id="email" name="email" placeholder="Your Email" required>
+                </div>
+                <div class="input-group">
+                    <input type="text" id="subject" name="subject" placeholder="Subject" required>
+                </div>
+                <div class="input-group">
+                    <textarea id="message" name="message" placeholder="Your Message" rows="5" required></textarea>
+                </div>
+                <button type="submit" class="submit-btn">Send Message</button>
+            </form>
+
+            <!-- Contact Information -->
+            <div class="contact-info">
+                <h3>Our Contact Details</h3>
+                <p><i class="fas fa-envelope"></i> support@itinerary.com</p>
+                <p><i class="fas fa-phone"></i> +1 (123) 456-7890</p>
+                <p><i class="fas fa-map-marker-alt"></i> 123 Travel Street, Wander City</p>
+
+                <!-- Social Media -->
+                <h3>Follow Us</h3>
+                <div class="social-icons">
+                    <a href="#"><i class="fab fa-facebook-f"></i></a>
+                    <a href="#"><i class="fab fa-twitter"></i></a>
+                    <a href="#"><i class="fab fa-instagram"></i></a>
+                    <a href="#"><i class="fab fa-linkedin-in"></i></a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Embedded Google Map -->
+        <div class="map-container">
+            <iframe src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3153.8354345093747!2d144.9537353153166!3d-37.816279742021665!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x6ad642af0f11fd81%3A0xf577d2d2f2f2f2f2!2sTravel%20Street!5e0!3m2!1sen!2sus!4v1633031234567!5m2!1sen!2sus" allowfullscreen="" loading="lazy"></iframe>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - ITENARO</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        .google-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            color: #444;
+            border: 1.5px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1.08rem;
+            font-weight: 600;
+            padding: 10px 0;
+            margin-bottom: 18px;
+            cursor: pointer;
+            transition: box-shadow 0.2s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .google-btn img {
+            width: 22px;
+            margin-right: 10px;
+        }
+        .google-btn:hover {
+            box-shadow: 0 4px 16px rgba(66,133,244,0.12);
+        }
+        .flash-container {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+    <main>
+        <div class="article-container" style="max-width:400px;margin:60px auto 0 auto;">
+            <h1 style="text-align:center;">Register</h1>
+
+            <!-- Flash messages container for Firebase -->
+            <div class="flash-container"></div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- Google Sign-up Button -->
+            <button type="button" class="google-btn google-signin-btn">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/4/4a/Logo_2013_Google.png" alt="Google Logo">
+                Sign up with Google
+            </button>
+
+            <div style="text-align:center;margin:10px 0;color:#888;">or</div>
+
+            <!-- Email/Password Registration Form -->
+            <form class="register-form login-form" style="display:flex;flex-direction:column;gap:16px;">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="email" name="email" placeholder="Email" required>
+                <input type="password" name="password" placeholder="Password (min 6 characters)" required minlength="6">
+                <button type="submit">Register</button>
+            </form>
+
+            <div class="login-links">
+                <a href="/login">Already have an account? Login</a>
+            </div>
+        </div>
+    </main>
+
+    <!-- Firebase Authentication Script -->
+    <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - ITENARO</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+        }
+
+        main {
+            min-height: calc(100vh - 120px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            margin-top: 80px;
+        }
+
+        .login-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            margin: 0 auto;
+            position: relative;
+            overflow: visible;
+        }
+
+        .login-title {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .google-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            color: #444;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            padding: 14px 20px;
+            margin-bottom: 24px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            text-decoration: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .google-btn:hover {
+            box-shadow: 0 8px 20px rgba(66,133,244,0.15);
+            border-color: #4285f4;
+            transform: translateY(-2px);
+        }
+
+        .google-btn img {
+            width: 24px;
+            height: 24px;
+            margin-right: 12px;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 24px 0;
+            position: relative;
+            color: #888;
+            font-size: 1rem;
+        }
+
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #e0e0e0;
+            z-index: 1;
+        }
+
+        .divider span {
+            background: white;
+            padding: 0 20px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .login-form input {
+            padding: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        .login-form input:focus {
+            outline: none;
+            border-color: #ff7f50;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(255, 127, 80, 0.1);
+        }
+
+        .login-form button {
+            background: linear-gradient(135deg, #ff7f50, #ff5733);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(255, 127, 80, 0.3);
+        }
+
+        .login-form button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(255, 127, 80, 0.4);
+        }
+
+        .login-links {
+            text-align: center;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .login-links a {
+            color: #ff7f50;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s ease;
+        }
+
+        .login-links a:hover {
+            color: #ff5733;
+            text-decoration: underline;
+        }
+
+        .flash-container {
+            margin-bottom: 20px;
+        }
+
+        .flash {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .flash.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .flash.danger {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            main {
+                padding: 20px 15px;
+                margin-top: 70px;
+                min-height: calc(100vh - 90px);
+            }
+
+            .login-container {
+                padding: 30px 25px;
+                margin: 0 auto;
+                max-width: 380px;
+            }
+
+            .login-title {
+                font-size: 1.7rem;
+                margin-bottom: 25px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            main {
+                padding: 15px 10px;
+                margin-top: 60px;
+            }
+
+            .login-container {
+                padding: 25px 20px;
+                margin: 0 auto;
+                max-width: 340px;
+            }
+
+            .login-title {
+                font-size: 1.5rem;
+                margin-bottom: 20px;
+            }
+
+            .google-btn, .login-form input, .login-form button {
+                padding: 14px;
+                font-size: 1rem;
+            }
+
+            .google-btn img {
+                width: 20px;
+                height: 20px;
+                margin-right: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <h1>ITENARO</h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Home</a></li>
+                    <li><a href="/destinations">Destinations</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="search-bar">
+                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
+                <button type="button" id="headerSearchBtn">Search</button>
+            </div>
+            <div class="profile">
+                {% if logged_in %}
+                    <a href="/profile">Profile</a> |
+                    <a href="/logout">Logout</a>
+                {% else %}
+                    <a href="/login">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+    <main>
+        <div class="login-container">
+            <h1 class="login-title">Welcome Back</h1>
+
+            <!-- Flash messages container for Firebase -->
+            <div class="flash-container"></div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="flash {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- Google Sign-in Button -->
+            <button type="button" class="google-btn google-signin-btn">
+                <img src="https://developers.google.com/identity/images/g-logo.png" alt="Google Logo">
+                Sign in with Google
+            </button>
+
+            <div class="divider">
+                <span>or continue with email</span>
+            </div>
+
+            <!-- Email/Password Login Form -->
+            <form class="login-form">
+                <input type="email" name="username" placeholder="Email Address" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Sign In</button>
+            </form>
+
+            <div class="login-links">
+                <a href="/forgot-password">Forgot password?</a> | <a href="/register">Create account</a>
+            </div>
+        </div>
+    </main>
+
+    <!-- Firebase Authentication Script -->
+    <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+</body>
+</html>
