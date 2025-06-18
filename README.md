@@ -445,20 +445,6 @@ We welcome contributions! Here's how you can help:
 
 See the list of [contributors](https://github.com/yourusername/itenero/contributors) who participated in this project.
 
----
-
-## 🙏 Acknowledgments
-
-### **Technologies & Services**
-- **[Google Gemini AI](https://ai.google.dev/)** - For powerful AI-generated itineraries
-- **[Firebase](https://firebase.google.com/)** - For authentication and hosting
-- **[OpenWeatherMap](https://openweathermap.org/)** - For real-time weather data
-- **[Flask](https://flask.palletsprojects.com/)** - For the robust web framework
-
-### **Inspiration**
-- Travel planning challenges faced by modern travelers
-- Need for personalized, AI-powered travel recommendations
-- Community-driven travel content and experiences
 
 
 
