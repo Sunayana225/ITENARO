@@ -8,7 +8,7 @@
 
 #### Google Gemini AI
 - Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
-- Delete the exposed key: `AIzaSyC1T02_042JU0N0UMVPEVu3TFXYPUR4DEo`
+- Delete the exposed key: `EXPOSED_API_KEY`
 - Generate a new API key
 
 #### OpenWeatherMap
