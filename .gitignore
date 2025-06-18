@@ -61,9 +61,16 @@ logs/
 backend/static/uploads/*
 !backend/static/uploads/.gitkeep
 
-# API Keys (if stored in files)
+# API Keys and Sensitive Configuration
 config.py
 secrets.py
+firebase-config-real.js
+.env.production
+.env.staging
+
+# Firebase Service Account Keys
+*-firebase-adminsdk-*.json
+serviceAccountKey.json
 
 # Node modules (if any)
 node_modules/

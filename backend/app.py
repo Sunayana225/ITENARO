@@ -24,9 +24,15 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
-# Load API keys from environment variables
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyC1T02_042JU0N0UMVPEVu3TFXYPUR4DEo")  # Fallback to hardcoded key if not set
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "aa52feefad1f400a14fa236928f73356")
+# Load API keys from environment variables (REQUIRED - no fallbacks for security)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+
+# Validate that API keys are set
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
+if not WEATHER_API_KEY:
+    raise ValueError("WEATHER_API_KEY environment variable is required")
 # Configure Gemini AI
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-pro-latest")  # Updated model name
@@ -97,14 +103,14 @@ users = {
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'yakkalasunayana1605@gmail.com'  # Replace with your email
-app.config['MAIL_PASSWORD'] = 'your_app_password'     # Use app password if using Gmail
-app.config['MAIL_DEFAULT_SENDER'] = 'yakkalasunayana1605@gmail.com'
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER')
 mail = Mail(app)
 
-# Google OAuth config (replace with your credentials)
-app.config["GOOGLE_OAUTH_CLIENT_ID"] = "86016384419-a7jgqvinkg73rpdqbcfvsinlf357gc7q.apps.googleusercontent.com"
-app.config["GOOGLE_OAUTH_CLIENT_SECRET"] = "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"
+# Google OAuth config (load from environment variables)
+app.config["GOOGLE_OAUTH_CLIENT_ID"] = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+app.config["GOOGLE_OAUTH_CLIENT_SECRET"] = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
 
 google_bp = make_google_blueprint(
     client_id=app.config["GOOGLE_OAUTH_CLIENT_ID"],
