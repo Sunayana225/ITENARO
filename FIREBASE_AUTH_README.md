@@ -35,7 +35,7 @@ The Firebase configuration is set up with your provided credentials:
 
 ```javascript
 const firebaseConfig = {
-    apiKey: "AIzaSyA9_HiVzTQNxTYWcf0I_p6ZztGVNIJwHbU",
+    apiKey: "YOUR_FIREBASE_API_KEY",
     authDomain: "realestate-456c4.firebaseapp.com",
     projectId: "realestate-456c4",
     storageBucket: "realestate-456c4.firebasestorage.app",
