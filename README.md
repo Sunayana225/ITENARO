@@ -489,22 +489,6 @@ See the list of [contributors](https://github.com/yourusername/itenero/contribut
 
 ---
 
-## 📞 Support & Contact
-
-### **Get Help**
-- 📖 **Documentation**: Check our [Wiki](https://github.com/yourusername/itenero/wiki)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/yourusername/itenero/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/itenero/discussions)
-
-### **Connect With Us**
-- 📧 **Email**: support@itenero.com
-- 🐦 **Twitter**: [@itenero_app](https://twitter.com/itenero_app)
-- 💼 **LinkedIn**: [ITENERO](https://linkedin.com/company/itenero)
-
----
-
-<div align="center">
-
 ### **⭐ Star this repository if you found it helpful!**
 
 **Made with ❤️ for travelers around the world**
