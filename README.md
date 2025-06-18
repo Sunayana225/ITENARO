@@ -432,21 +432,6 @@ We welcome contributions! Here's how you can help:
 
 ---
 
-## 👥 Authors
-
-### **Core Team**
-
-- **[Your Name]** - *Lead Developer* - [@yourusername](https://github.com/yourusername)
-  - 🔧 Backend Development
-  - 🤖 AI Integration
-  - 🎨 UI/UX Design
-
-### **Contributors**
-
-See the list of [contributors](https://github.com/yourusername/itenero/contributors) who participated in this project.
-
-
-
 
 ### **⭐ Star this repository if you found it helpful!**
 
