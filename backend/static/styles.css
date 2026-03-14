@@ -1679,6 +1679,141 @@ h2 {
     border-bottom: 2px solid #fff0e6;
 }
 
+.itin-day-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+}
+
+.replan-day-btn {
+    background: #fff;
+    border: 1.5px solid #ffb69d;
+    color: #ff5733;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.replan-day-btn:hover {
+    background: #ff7f50;
+    border-color: #ff7f50;
+    color: #fff;
+}
+
+.itin-day.replanned-flash {
+    animation: replanPulse 1.6s ease;
+}
+
+@keyframes replanPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.45);
+    }
+    100% {
+        box-shadow: 0 0 0 20px rgba(46, 204, 113, 0);
+    }
+}
+
+.replan-modal-backdrop {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 5000;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.replan-modal {
+    width: min(560px, 94vw);
+    background: #fff;
+    border-radius: 14px;
+    padding: 22px;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.2);
+}
+
+.replan-modal h3 {
+    margin: 0 0 8px 0;
+    color: #333;
+}
+
+.replan-modal p {
+    margin: 0 0 12px 0;
+    color: #666;
+    font-size: 0.92rem;
+}
+
+.replan-modal textarea {
+    width: 100%;
+    min-height: 120px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 12px;
+    resize: vertical;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+}
+
+.replan-modal textarea:focus {
+    outline: none;
+    border-color: #ff7f50;
+}
+
+.replan-status {
+    margin-top: 10px;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.replan-status.success {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.replan-status.error {
+    background: #fdecea;
+    color: #b71c1c;
+}
+
+.replan-modal-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.replan-cancel-btn,
+.replan-submit-btn {
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.replan-cancel-btn {
+    background: #f3f3f3;
+    color: #555;
+}
+
+.replan-submit-btn {
+    background: linear-gradient(135deg, #ff7f50, #ff5733);
+    color: #fff;
+}
+
+.replan-submit-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
 .itin-place {
     background: #fafafa;
     border-radius: 10px;

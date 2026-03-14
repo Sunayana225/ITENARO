@@ -138,6 +138,60 @@ Return ONLY the JSON with no additional text."""
     return prompt
 
 
+def generate_day_replan_prompt(destination, day_number, current_day, instruction, budget="", purpose="", preferences=None):
+    """Builds a focused prompt to regenerate a single itinerary day only."""
+    preferences = preferences or []
+    preferences_str = ", ".join(preferences) if preferences else "None specified"
+    current_day_json = json.dumps(current_day, ensure_ascii=False, indent=2)
+
+    prompt = f"""You are an expert travel planner. Re-plan only Day {day_number} for a trip to {destination}.
+Budget context: {budget or 'Not specified'}
+Purpose context: {purpose or 'Not specified'}
+Preferences context: {preferences_str}
+
+User instruction for changes:
+"{instruction}"
+
+Current Day {day_number} JSON:
+{current_day_json}
+
+IMPORTANT RULES:
+1. Re-plan only this single day.
+2. Keep realistic activity flow for one day.
+3. Return ONLY valid JSON (no markdown, no extra text).
+4. Use this exact structure:
+
+{{
+  "day": {day_number},
+  "title": "Day {day_number} - Updated title",
+  "places": [
+    {{
+      "name": "Place Name",
+      "lat": 48.8566,
+      "lng": 2.3522,
+      "time": "9:00 AM - 11:00 AM",
+      "description": "What to do and why",
+      "cost_estimate": "$10 - $25"
+    }}
+  ],
+  "food_recommendations": [
+    {{
+      "name": "Restaurant Name",
+      "cuisine": "Cuisine",
+      "price_range": "$12 - $30",
+      "meal": "Lunch"
+    }}
+  ],
+  "tips": "Helpful practical tip for this day"
+}}
+
+5. Include 3-6 places and at least 1 food recommendation.
+6. Keep JSON fields complete and consistent.
+"""
+
+    return prompt
+
+
 def parse_json_response(response_text):
     """
     Attempts to parse JSON from the Gemini response, handling markdown code fences.

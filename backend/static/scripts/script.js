@@ -20,9 +20,17 @@ document.addEventListener("DOMContentLoaded", function () {
     const totalSteps = 5;
     let selectedPreferences = [];
     let currentItineraryData = null; // Store structured itinerary data
+    let currentDayToReplan = null;
     let itineraryMap = null; // Leaflet map instance
     let mapMarkers = []; // Store map markers
     let mapPolylines = []; // Store route lines
+
+    const replanModal = document.getElementById("replanModal");
+    const replanInstruction = document.getElementById("replanInstruction");
+    const replanStatus = document.getElementById("replanStatus");
+    const replanModalTitle = document.getElementById("replanModalTitle");
+    const replanCancelBtn = document.getElementById("replanCancelBtn");
+    const replanSubmitBtn = document.getElementById("replanSubmitBtn");
 
     // Initialize Firebase Auth State Listener
     initAuthStateListener();
@@ -159,6 +167,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (data.itinerary_data) {
                     currentItineraryData = data.itinerary_data;
                     renderItineraryMap(currentItineraryData);
+                    injectReplanButtons();
                 }
 
                 // Fetch weather for destination
@@ -338,6 +347,166 @@ document.addEventListener("DOMContentLoaded", function () {
             itineraryMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
         }
     }
+
+    function injectReplanButtons() {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) return;
+
+        const dayCards = document.querySelectorAll('.itin-day');
+        dayCards.forEach((card, index) => {
+            const dayData = currentItineraryData.days[index];
+            if (!dayData || card.querySelector('.replan-day-btn')) return;
+
+            const actions = document.createElement('div');
+            actions.className = 'itin-day-actions';
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'replan-day-btn';
+            button.textContent = `🔁 Re-Plan Day ${dayData.day}`;
+            button.addEventListener('click', () => openReplanModal(dayData.day));
+
+            actions.appendChild(button);
+            const titleEl = card.querySelector('.itin-day-title');
+            if (titleEl) {
+                titleEl.insertAdjacentElement('afterend', actions);
+            } else {
+                card.insertBefore(actions, card.firstChild);
+            }
+        });
+    }
+
+    function showReplanStatus(message, isError = false) {
+        if (!replanStatus) return;
+        replanStatus.textContent = message;
+        replanStatus.className = `replan-status ${isError ? 'error' : 'success'}`;
+        replanStatus.style.display = 'block';
+    }
+
+    function openReplanModal(dayNumber) {
+        if (!replanModal) return;
+
+        currentDayToReplan = dayNumber;
+        if (replanModalTitle) {
+            replanModalTitle.textContent = `🔁 Re-Plan Day ${dayNumber}`;
+        }
+        if (replanInstruction) {
+            replanInstruction.value = '';
+            replanInstruction.focus();
+        }
+        if (replanStatus) {
+            replanStatus.style.display = 'none';
+            replanStatus.textContent = '';
+        }
+
+        replanModal.style.display = 'flex';
+    }
+
+    function closeReplanModal() {
+        if (!replanModal) return;
+        replanModal.style.display = 'none';
+        currentDayToReplan = null;
+    }
+
+    function highlightReplannedDay(dayNumber) {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) return;
+        const dayIndex = currentItineraryData.days.findIndex(day => parseInt(day.day) === parseInt(dayNumber));
+        if (dayIndex === -1) return;
+
+        const dayCards = document.querySelectorAll('.itin-day');
+        const targetCard = dayCards[dayIndex];
+        if (!targetCard) return;
+
+        targetCard.classList.add('replanned-flash');
+        setTimeout(() => targetCard.classList.remove('replanned-flash'), 1800);
+    }
+
+    async function submitDayReplan() {
+        if (!currentItineraryData || !currentDayToReplan) {
+            showReplanStatus('No itinerary day selected for re-plan.', true);
+            return;
+        }
+
+        const instruction = (replanInstruction?.value || '').trim();
+        if (instruction.length < 5) {
+            showReplanStatus('Please provide at least 5 characters describing the change.', true);
+            return;
+        }
+
+        const submitBtnText = replanSubmitBtn?.textContent || 'Re-Plan Day';
+        if (replanSubmitBtn) {
+            replanSubmitBtn.disabled = true;
+            replanSubmitBtn.textContent = 'Re-planning...';
+        }
+
+        try {
+            const response = await fetch('/api/replan-day', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    itinerary_data: currentItineraryData,
+                    day_number: currentDayToReplan,
+                    instruction,
+                    destination: document.getElementById('destination')?.value || '',
+                    budget: document.getElementById('budget')?.value || '',
+                    purpose: document.getElementById('purpose')?.value || '',
+                    preferences: selectedPreferences,
+                })
+            });
+
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to re-plan day');
+            }
+
+            currentItineraryData = payload.itinerary_data || currentItineraryData;
+            const itineraryContent = document.getElementById('itinerary-content');
+            if (itineraryContent && payload.itinerary) {
+                itineraryContent.innerHTML = payload.itinerary;
+            }
+
+            renderItineraryMap(currentItineraryData);
+            injectReplanButtons();
+            highlightReplannedDay(payload.day_number || currentDayToReplan);
+            closeReplanModal();
+        } catch (error) {
+            showReplanStatus(error.message || 'Failed to re-plan day. Please try again.', true);
+        } finally {
+            if (replanSubmitBtn) {
+                replanSubmitBtn.disabled = false;
+                replanSubmitBtn.textContent = submitBtnText;
+            }
+        }
+    }
+
+    if (replanCancelBtn) {
+        replanCancelBtn.addEventListener('click', closeReplanModal);
+    }
+
+    if (replanSubmitBtn) {
+        replanSubmitBtn.addEventListener('click', submitDayReplan);
+    }
+
+    if (replanInstruction) {
+        replanInstruction.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                submitDayReplan();
+            }
+        });
+    }
+
+    if (replanModal) {
+        replanModal.addEventListener('click', function (event) {
+            if (event.target === replanModal) {
+                closeReplanModal();
+            }
+        });
+    }
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && replanModal && replanModal.style.display === 'flex') {
+            closeReplanModal();
+        }
+    });
 
     // ============================================
     // PDF EXPORT (jsPDF + html2canvas)

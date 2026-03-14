@@ -153,6 +153,20 @@
             <div id="itinerary-content" class="itinerary-content"></div>
         </div>
 
+        <!-- Day Re-Plan Modal -->
+        <div id="replanModal" class="replan-modal-backdrop" style="display: none;">
+            <div class="replan-modal">
+                <h3 id="replanModalTitle">🔁 Re-Plan Day</h3>
+                <p>Tell the AI exactly what to change for this day.</p>
+                <textarea id="replanInstruction" placeholder="Example: Make this day less walking-heavy and add more local food spots."></textarea>
+                <div id="replanStatus" class="replan-status" style="display: none;"></div>
+                <div class="replan-modal-actions">
+                    <button type="button" id="replanCancelBtn" class="replan-cancel-btn">Cancel</button>
+                    <button type="button" id="replanSubmitBtn" class="replan-submit-btn">Re-Plan Day</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Packing List Panel -->
         <div id="packingListPanel" class="container packing-list-panel" style="display: none;">
             <div class="packing-header">
@@ -287,4 +301,4 @@
         }
     </script>
 </body>
-</html>
+</html>

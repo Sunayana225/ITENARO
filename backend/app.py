@@ -13,7 +13,13 @@ from dotenv import load_dotenv
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
 import google.generativeai as genai
-from prompts import generate_itinerary_prompt, format_itinerary_response, generate_packing_list_prompt, parse_json_response  # Import the functions
+from prompts import (
+    generate_itinerary_prompt,
+    format_itinerary_response,
+    generate_packing_list_prompt,
+    generate_day_replan_prompt,
+    parse_json_response,
+)
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_mail import Mail, Message
 from flask_dance.contrib.google import make_google_blueprint, google
@@ -92,6 +98,115 @@ def record_api_call():
     """Record an API call for rate limiting."""
     global API_CALL_HISTORY
     API_CALL_HISTORY.append(datetime.now())
+
+
+def _coerce_positive_int(value):
+    """Convert value to positive int; return None when invalid."""
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_places(places, fallback_places=None):
+    """Normalize place objects and keep only valid entries."""
+    normalized = []
+    fallback_places = fallback_places or []
+
+    for place in places or []:
+        if not isinstance(place, dict):
+            continue
+
+        name = str(place.get('name', '')).strip()
+        if not name:
+            continue
+
+        entry = {
+            'name': name,
+            'time': str(place.get('time', '')).strip() or 'Flexible timing',
+            'description': str(place.get('description', '')).strip(),
+            'cost_estimate': str(place.get('cost_estimate', '')).strip(),
+        }
+
+        lat = place.get('lat')
+        lng = place.get('lng')
+        try:
+            if lat is not None and lng is not None:
+                entry['lat'] = float(lat)
+                entry['lng'] = float(lng)
+        except (TypeError, ValueError):
+            pass
+
+        normalized.append(entry)
+
+    if normalized:
+        return normalized
+    return fallback_places
+
+
+def _normalize_food_recommendations(food_recommendations, fallback_food=None):
+    """Normalize food recommendation objects and keep only valid entries."""
+    normalized = []
+    fallback_food = fallback_food or []
+
+    for food in food_recommendations or []:
+        if not isinstance(food, dict):
+            continue
+
+        name = str(food.get('name', '')).strip()
+        if not name:
+            continue
+
+        normalized.append({
+            'name': name,
+            'cuisine': str(food.get('cuisine', '')).strip(),
+            'price_range': str(food.get('price_range', '')).strip(),
+            'meal': str(food.get('meal', '')).strip(),
+        })
+
+    if normalized:
+        return normalized
+    return fallback_food
+
+
+def _select_replanned_day(payload, target_day):
+    """Accept either a single day object or a payload containing a days list."""
+    if not isinstance(payload, dict):
+        return None
+
+    if isinstance(payload.get('days'), list):
+        day_candidates = [d for d in payload['days'] if isinstance(d, dict)]
+        exact_match = next((d for d in day_candidates if _coerce_positive_int(d.get('day')) == target_day), None)
+        if exact_match:
+            return exact_match
+        return day_candidates[0] if day_candidates else None
+
+    return payload
+
+
+def _normalize_replanned_day(payload, target_day, fallback_day):
+    """Normalize a replanned day, preserving fallback values when AI omits fields."""
+    selected = _select_replanned_day(payload, target_day)
+    if not isinstance(selected, dict):
+        return None
+
+    fallback_day = fallback_day or {}
+    normalized_day = {
+        'day': target_day,
+        'title': str(selected.get('title') or fallback_day.get('title') or f'Day {target_day}').strip(),
+        'places': _normalize_places(selected.get('places'), fallback_day.get('places', [])),
+        'food_recommendations': _normalize_food_recommendations(
+            selected.get('food_recommendations'),
+            fallback_day.get('food_recommendations', [])
+        ),
+        'tips': str(selected.get('tips') or fallback_day.get('tips') or '').strip(),
+    }
+
+    if not normalized_day['places']:
+        return None
+
+    return normalized_day
 
 # Initialize the database when the app starts
 # init_db()
@@ -519,6 +634,91 @@ def generate_packing_list():
         if "429" in error_message or "quota" in error_message.lower():
             return jsonify({"error": "API quota exceeded. Please try again later."}), 429
         return jsonify({"error": "Failed to generate packing list"}), 500
+
+
+@app.route('/api/replan-day', methods=['POST'])
+def replan_day():
+    """Regenerate a single day in an existing itinerary based on user instruction."""
+    data = request.json or {}
+
+    can_proceed, rate_limit_error = check_rate_limit()
+    if not can_proceed:
+        return jsonify({"error": rate_limit_error}), 429
+
+    itinerary_data = data.get('itinerary_data')
+    day_number = data.get('day_number')
+    instruction = str(data.get('instruction', '')).strip()
+
+    if itinerary_data is None or day_number is None or not instruction:
+        return jsonify({"error": "itinerary_data, day_number, and instruction are required."}), 400
+
+    if len(instruction) < 5:
+        return jsonify({"error": "Instruction must be at least 5 characters."}), 400
+
+    if not isinstance(itinerary_data, dict) or not isinstance(itinerary_data.get('days'), list) or not itinerary_data['days']:
+        return jsonify({"error": "itinerary_data must include a non-empty days list."}), 400
+
+    try:
+        day_number = int(day_number)
+        if day_number < 1:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({"error": "day_number must be a positive integer."}), 400
+
+    day_index = next(
+        (idx for idx, day in enumerate(itinerary_data['days']) if _coerce_positive_int(day.get('day')) == day_number),
+        None
+    )
+
+    if day_index is None:
+        return jsonify({"error": f"Day {day_number} not found in itinerary."}), 404
+
+    existing_day = itinerary_data['days'][day_index]
+    destination = str(data.get('destination') or itinerary_data.get('destination') or '').strip() or 'Trip destination'
+    budget = str(data.get('budget', '')).strip()
+    purpose = str(data.get('purpose', '')).strip()
+    preferences = data.get('preferences', [])
+    if not isinstance(preferences, list):
+        preferences = []
+
+    try:
+        record_api_call()
+        prompt = generate_day_replan_prompt(
+            destination=destination,
+            day_number=day_number,
+            current_day=existing_day,
+            instruction=instruction,
+            budget=budget,
+            purpose=purpose,
+            preferences=preferences,
+        )
+
+        response = model.generate_content(prompt)
+        response_text = response.text.strip() if response and getattr(response, 'text', None) else ''
+        parsed_day = parse_json_response(response_text)
+
+        normalized_day = _normalize_replanned_day(parsed_day, day_number, existing_day)
+        if not normalized_day:
+            return jsonify({"error": "AI returned invalid day format. Please try again."}), 500
+
+        updated_itinerary = json.loads(json.dumps(itinerary_data))
+        updated_itinerary['days'][day_index] = normalized_day
+        formatted_itinerary = format_itinerary_response(json.dumps(updated_itinerary))
+
+        return jsonify({
+            "message": "Day replanned successfully.",
+            "day_number": day_number,
+            "replanned_day": normalized_day,
+            "itinerary_data": updated_itinerary,
+            "itinerary": formatted_itinerary,
+        })
+
+    except Exception as e:
+        error_message = str(e)
+        logging.error(f"Error replanning day {day_number}: {error_message}")
+        if "429" in error_message or "quota" in error_message.lower():
+            return jsonify({"error": "API quota exceeded. Please try again later."}), 429
+        return jsonify({"error": "Failed to replan day. Please try again."}), 500
 
 
 # ==================== PHASE 2 - SHAREABLE ITINERARY LINKS ====================
