@@ -1,45 +1,32 @@
-import sqlite3
+#!/usr/bin/env python3
+"""Initialize the project database from the canonical schema file."""
+
 import os
+import sqlite3
 
-# Ensure the Database directory exists
-if not os.path.exists('Database'):
-    os.makedirs('Database')
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_DIR = os.path.join(ROOT_DIR, 'Database')
+DB_PATH = os.path.join(DB_DIR, 'blog.db')
+SCHEMA_PATH = os.path.join(ROOT_DIR, 'backend', 'schema.sql')
 
-# Connect to the database (or create it if it doesn't exist)
-db_path = 'Database/blog.db'
-try:
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
 
-    # Create blog_posts table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS blog_posts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        author TEXT NOT NULL,
-        date_posted DATETIME DEFAULT CURRENT_TIMESTAMP,
-        likes INTEGER DEFAULT 0,
-        dislikes INTEGER DEFAULT 0
-    )
-    ''')
+def main():
+    os.makedirs(DB_DIR, exist_ok=True)
 
-    # Create comments table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS comments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        post_id INTEGER,
-        author TEXT NOT NULL,
-        content TEXT NOT NULL,
-        date_posted DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (post_id) REFERENCES blog_posts (id)
-    )
-    ''')
+    if not os.path.exists(SCHEMA_PATH):
+        print(f"Schema file not found: {SCHEMA_PATH}")
+        return
 
-    # Commit changes and close the connection
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        with open(SCHEMA_PATH, 'r', encoding='utf-8') as schema_file:
+            conn.executescript(schema_file.read())
+        conn.commit()
+        conn.close()
+        print(f"Database initialized successfully at {DB_PATH}!")
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
 
-    print(f"Database initialized successfully at {db_path}!")
-except sqlite3.Error as e:
-    print(f"An error occurred: {e}")
+
+if __name__ == '__main__':
+    main()

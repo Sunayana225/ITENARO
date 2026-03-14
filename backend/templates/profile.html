@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Profile - ITENARO</title>
+    <meta name="theme-color" content="#ff7f50">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
         .profile-container {
@@ -834,9 +836,85 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Digital Passport Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">🛂 Digital Passport</div>
+                                <button class="edit-btn" onclick="openAddStampModal()">+ Add Stamp</button>
+                            </div>
+
+                            <!-- Traveler Level -->
+                            <div id="passportLevel" style="text-align:center; padding: 20px; background: linear-gradient(135deg, #fff5ef, #fff0e6); border-radius: 14px; margin-bottom: 20px;">
+                                <div style="font-size: 56px; margin-bottom: 8px;" id="passportBadge">🔰</div>
+                                <div style="font-size: 1.3rem; font-weight: 700; color: #333;" id="passportTitle">Armchair Explorer</div>
+                                <div style="font-size: 0.95rem; color: #888; margin-top: 4px;" id="passportCountryCount">0 countries visited</div>
+                            </div>
+
+                            <!-- Stamps Grid -->
+                            <div id="passportStamps" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px;">
+                                <div style="text-align: center; padding: 30px; color: #aaa; grid-column: 1 / -1;">
+                                    <div style="font-size: 48px; margin-bottom: 10px;">🌍</div>
+                                    <p>No stamps yet. Start traveling to earn passport stamps!</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Saved Itineraries Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">📋 My Saved Itineraries</div>
+                            </div>
+                            <div id="savedItinerariesContainer">
+                                <div style="text-align: center; padding: 30px; color: #aaa;">
+                                    <div style="font-size: 48px; margin-bottom: 10px;">📝</div>
+                                    <p>No saved itineraries yet. Generate and save an itinerary from the home page!</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div> <!-- End profileContent -->
+
+            <!-- Add Stamp Modal -->
+            <div id="addStampModal" class="modal">
+                <div class="modal-content" style="max-width: 450px;">
+                    <div class="modal-header">
+                        <h2 class="modal-title">🛂 Add Passport Stamp</h2>
+                        <button class="close-btn" onclick="closeModal('addStampModal')">&times;</button>
+                    </div>
+                    <form id="addStampForm">
+                        <div class="form-group">
+                            <label for="stampCountry">Country</label>
+                            <input type="text" id="stampCountry" placeholder="e.g., Japan" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="stampCode">Country Code (2 letters)</label>
+                            <input type="text" id="stampCode" placeholder="e.g., JP" maxlength="2" style="text-transform:uppercase;">
+                        </div>
+                        <div class="form-group">
+                            <label for="stampDate">Visit Date</label>
+                            <input type="date" id="stampDate">
+                        </div>
+                        <div class="form-group">
+                            <label for="stampNotes">Trip Notes (optional)</label>
+                            <textarea id="stampNotes" rows="2" placeholder="Share your favorite memory..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="stampType">Stamp Type</label>
+                            <select id="stampType">
+                                <option value="visited">✈️ Visited</option>
+                                <option value="blogged">📝 Blogged About</option>
+                                <option value="wishlisted">❤️ Wishlisted</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal('addStampModal')">Cancel</button>
+                            <button type="submit" class="btn btn-primary">🛂 Add Stamp</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
 
             <!-- Edit Personal Information Modal -->
             <div id="editPersonalModal" class="modal">
@@ -1452,6 +1530,184 @@
                 }
             }
         });
+
+        // ============================================
+        // DIGITAL PASSPORT
+        // ============================================
+
+        async function loadPassport() {
+            if (!currentUser) return;
+            try {
+                const resp = await fetch(`/api/passport/${currentUser.uid}`);
+                const data = await resp.json();
+
+                // Update level display
+                if (data.level) {
+                    document.getElementById('passportBadge').textContent = data.level.badge || '🔰';
+                    document.getElementById('passportTitle').textContent = data.level.title || 'Explorer';
+                }
+                document.getElementById('passportCountryCount').textContent =
+                    `${data.countries_visited || 0} countries visited`;
+
+                // Render stamps
+                renderPassportStamps(data.stamps || []);
+            } catch (err) {
+                console.error('Error loading passport:', err);
+            }
+        }
+
+        function renderPassportStamps(stamps) {
+            const container = document.getElementById('passportStamps');
+            if (!stamps || stamps.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 30px; color: #aaa; grid-column: 1 / -1;">
+                        <div style="font-size: 48px; margin-bottom: 10px;">🌍</div>
+                        <p>No stamps yet. Start traveling to earn passport stamps!</p>
+                    </div>`;
+                return;
+            }
+
+            const stampTypeIcons = { visited: '✈️', blogged: '📝', wishlisted: '❤️' };
+            const stampTypeBgs = { visited: '#e3f2fd', blogged: '#fff3e0', wishlisted: '#fce4ec' };
+
+            container.innerHTML = stamps.map(s => `
+                <div style="
+                    background: ${stampTypeBgs[s.stamp_type] || '#f5f5f5'};
+                    border-radius: 12px;
+                    padding: 16px 10px;
+                    text-align: center;
+                    border: 2px solid rgba(0,0,0,0.06);
+                    transition: transform 0.2s;
+                    cursor: default;
+                " title="${s.trip_notes || ''}">
+                    <div style="font-size: 28px; margin-bottom: 4px;">${getFlagEmoji(s.country_code || '')}</div>
+                    <div style="font-size: 0.88rem; font-weight: 700; color: #333;">${s.country}</div>
+                    <div style="font-size: 0.75rem; color: #999;">${stampTypeIcons[s.stamp_type] || ''} ${s.visited_date || ''}</div>
+                </div>
+            `).join('');
+        }
+
+        function getFlagEmoji(code) {
+            if (!code || code.length !== 2) return '🏳️';
+            const codePoints = code.toUpperCase().split('').map(
+                c => 127397 + c.charCodeAt(0)
+            );
+            return String.fromCodePoint(...codePoints);
+        }
+
+        window.openAddStampModal = function() {
+            document.getElementById('addStampModal').style.display = 'block';
+            document.getElementById('stampDate').value = new Date().toISOString().split('T')[0];
+        };
+
+        // Handle add stamp form
+        const addStampForm = document.getElementById('addStampForm');
+        if (addStampForm) {
+            addStampForm.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                if (!currentUser) {
+                    showMessage('Please log in first', 'error');
+                    return;
+                }
+
+                try {
+                    const resp = await fetch('/api/passport/stamp', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            firebase_uid: currentUser.uid,
+                            country: document.getElementById('stampCountry').value,
+                            country_code: document.getElementById('stampCode').value.toUpperCase(),
+                            visited_date: document.getElementById('stampDate').value,
+                            trip_notes: document.getElementById('stampNotes').value,
+                            stamp_type: document.getElementById('stampType').value
+                        })
+                    });
+
+                    if (resp.ok) {
+                        closeModal('addStampModal');
+                        addStampForm.reset();
+                        loadPassport();
+                        showMessage('🛂 Stamp added to your passport!', 'success');
+                    } else {
+                        showMessage('Failed to add stamp', 'error');
+                    }
+                } catch (err) {
+                    console.error('Add stamp error:', err);
+                    showMessage('Error adding stamp', 'error');
+                }
+            });
+        }
+
+        // ============================================
+        // SAVED ITINERARIES
+        // ============================================
+
+        async function loadSavedItineraries() {
+            if (!currentUser) return;
+            try {
+                const resp = await fetch(`/api/my-itineraries/${currentUser.uid}`);
+                const itineraries = await resp.json();
+                renderSavedItineraries(itineraries);
+            } catch (err) {
+                console.error('Error loading itineraries:', err);
+            }
+        }
+
+        function renderSavedItineraries(itineraries) {
+            const container = document.getElementById('savedItinerariesContainer');
+            if (!itineraries || itineraries.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 30px; color: #aaa;">
+                        <div style="font-size: 48px; margin-bottom: 10px;">📝</div>
+                        <p>No saved itineraries yet. Generate and save an itinerary from the home page!</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">${
+                itineraries.map(it => `
+                    <div style="
+                        background: white;
+                        border-radius: 12px;
+                        padding: 20px;
+                        border: 1.5px solid #f0f0f0;
+                        box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+                        transition: transform 0.2s;
+                    ">
+                        <h4 style="margin: 0 0 8px 0; color: #333;">📍 ${it.destination}</h4>
+                        <p style="color: #888; font-size: 0.88rem; margin: 0 0 4px 0;">📅 ${it.duration || '?'} days · 💰 ${it.budget || 'N/A'} · 🎯 ${it.purpose || ''}</p>
+                        <p style="color: #aaa; font-size: 0.8rem; margin: 0 0 12px 0;">Created: ${new Date(it.created_at).toLocaleDateString()}</p>
+                        <a href="/shared/${it.share_token}" target="_blank" style="
+                            display: inline-block;
+                            background: linear-gradient(135deg, #ff7f50, #ff5733);
+                            color: white;
+                            padding: 8px 16px;
+                            border-radius: 8px;
+                            text-decoration: none;
+                            font-size: 0.85rem;
+                            font-weight: 600;
+                        ">🔗 View Shared Link</a>
+                    </div>
+                `).join('')
+            }</div>`;
+        }
+
+        // Load passport and itineraries when profile loads
+        const origLoadProfile = window.onAuthReady;
+        function loadAllProfileData() {
+            loadPassport();
+            loadSavedItineraries();
+        }
+
+        // Hook into auth state - load after user is set
+        const profileCheckInterval = setInterval(() => {
+            if (currentUser) {
+                loadAllProfileData();
+                clearInterval(profileCheckInterval);
+            }
+        }, 500);
+        setTimeout(() => clearInterval(profileCheckInterval), 10000);
     </script>
 </body>
 </html>

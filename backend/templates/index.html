@@ -3,8 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ITENARY - Travel Itinerary Generator</title>
+    <title>ITENARO - AI-Powered Travel Itinerary Generator</title>
+    <meta name="description" content="Plan your perfect trip with AI. Generate personalized travel itineraries with interactive maps, packing lists, and more.">
+    <meta name="theme-color" content="#ff7f50">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <!-- Leaflet CSS for interactive maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <!-- Header with Logo, Navigation, and Search Bar -->
@@ -12,7 +19,7 @@
         <div class="header-content">
             <!-- Logo and App Name -->
             <div class="logo-container">
-                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARY Logo" class="logo">
+                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARO Logo" class="logo">
                 <h1>ITENARO</h1>
             </div>
 
@@ -47,7 +54,7 @@
     <!-- Main Content -->
     <div class="main-content">
         <div class="container">
-            <h2>Plan Your Perfect Trip</h2>
+            <h2>Plan Your Perfect Trip ✈️</h2>
             <!-- Step 1: Destination -->
             <div class="step" id="step1">
                 <label for="destination">Where do you want to go?</label>
@@ -107,13 +114,177 @@
         </div>
 
         <!-- Itinerary Display Section -->
-        <div id="itinerary" class="container" style="display: none;">
+        <div id="itinerary" class="container itinerary-results-container" style="display: none;">
             <h2>Your Personalized Itinerary</h2>
+
+            <!-- Export Toolbar -->
+            <div id="exportToolbar" class="export-toolbar">
+                <button type="button" id="exportPdfBtn" class="export-btn export-pdf" title="Download as PDF">
+                    <span class="export-icon">📄</span> Export PDF
+                </button>
+                <button type="button" id="exportCalendarBtn" class="export-btn export-calendar" title="Add to Calendar (.ics)">
+                    <span class="export-icon">📅</span> Add to Calendar
+                </button>
+                <button type="button" id="shareBtn" class="export-btn export-share" title="Share Itinerary">
+                    <span class="export-icon">🔗</span> Share
+                </button>
+                <button type="button" id="packingListBtn" class="export-btn export-packing" title="Generate Packing List">
+                    <span class="export-icon">🧳</span> Packing List
+                </button>
+                <button type="button" id="saveLinkBtn" class="export-btn export-share" title="Save & Get Shareable Link">
+                    <span class="export-icon">💾</span> Save Link
+                </button>
+                <button type="button" id="currencyBtn" class="export-btn export-calendar" title="Currency Converter">
+                    <span class="export-icon">💱</span> Currency
+                </button>
+                <button type="button" id="budgetBtn" class="export-btn export-pdf" title="Budget Tracker">
+                    <span class="export-icon">📊</span> Budget
+                </button>
+            </div>
+
+            <!-- Interactive Map -->
+            <div id="mapSection" class="map-section" style="display: none;">
+                <h3>📍 Interactive Route Map</h3>
+                <div id="dayFilterBar" class="day-filter-bar"></div>
+                <div id="itineraryMap" class="itinerary-map"></div>
+            </div>
+
+            <!-- Itinerary Content -->
             <div id="itinerary-content" class="itinerary-content"></div>
-            <!-- Share Button -->
-            <button type="button" id="shareBtn">Share Itinerary</button>
+        </div>
+
+        <!-- Packing List Panel -->
+        <div id="packingListPanel" class="container packing-list-panel" style="display: none;">
+            <div class="packing-header">
+                <h2>🧳 AI Packing List</h2>
+                <button type="button" id="closePackingBtn" class="close-packing-btn">&times;</button>
+            </div>
+            <div id="packingListContent" class="packing-list-content">
+                <p class="packing-placeholder">Click "Generate Packing List" after creating your itinerary to get a personalized checklist!</p>
+            </div>
+            <div id="packingProgress" class="packing-progress" style="display: none;">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <span id="progressText">0 / 0 items packed</span>
+            </div>
+        </div>
+
+        <!-- Currency Converter Panel -->
+        <div id="currencyPanel" class="container currency-panel" style="display: none;">
+            <div class="packing-header">
+                <h2>💱 Currency Converter</h2>
+                <button type="button" id="closeCurrencyBtn" class="close-packing-btn">&times;</button>
+            </div>
+            <div class="currency-converter-grid">
+                <div class="currency-input-group">
+                    <label for="currencyAmount">Amount</label>
+                    <input type="number" id="currencyAmount" value="100" min="0" step="0.01">
+                </div>
+                <div class="currency-input-group">
+                    <label for="currencyFrom">From</label>
+                    <select id="currencyFrom">
+                        <option value="USD" selected>🇺🇸 USD</option>
+                        <option value="EUR">🇪🇺 EUR</option>
+                        <option value="GBP">🇬🇧 GBP</option>
+                        <option value="JPY">🇯🇵 JPY</option>
+                        <option value="INR">🇮🇳 INR</option>
+                        <option value="AUD">🇦🇺 AUD</option>
+                        <option value="CAD">🇨🇦 CAD</option>
+                        <option value="CHF">🇨🇭 CHF</option>
+                        <option value="CNY">🇨🇳 CNY</option>
+                        <option value="THB">🇹🇭 THB</option>
+                        <option value="AED">🇦🇪 AED</option>
+                        <option value="SGD">🇸🇬 SGD</option>
+                        <option value="KRW">🇰🇷 KRW</option>
+                    </select>
+                </div>
+                <div class="currency-swap-btn" id="currencySwapBtn">⇄</div>
+                <div class="currency-input-group">
+                    <label for="currencyTo">To</label>
+                    <select id="currencyTo">
+                        <option value="USD">🇺🇸 USD</option>
+                        <option value="EUR" selected>🇪🇺 EUR</option>
+                        <option value="GBP">🇬🇧 GBP</option>
+                        <option value="JPY">🇯🇵 JPY</option>
+                        <option value="INR">🇮🇳 INR</option>
+                        <option value="AUD">🇦🇺 AUD</option>
+                        <option value="CAD">🇨🇦 CAD</option>
+                        <option value="CHF">🇨🇭 CHF</option>
+                        <option value="CNY">🇨🇳 CNY</option>
+                        <option value="THB">🇹🇭 THB</option>
+                        <option value="AED">🇦🇪 AED</option>
+                        <option value="SGD">🇸🇬 SGD</option>
+                        <option value="KRW">🇰🇷 KRW</option>
+                    </select>
+                </div>
+            </div>
+            <div id="currencyResult" class="currency-result"></div>
+        </div>
+
+        <!-- Budget Tracker Panel -->
+        <div id="budgetPanel" class="container budget-panel" style="display: none;">
+            <div class="packing-header">
+                <h2>📊 Budget Tracker</h2>
+                <button type="button" id="closeBudgetBtn" class="close-packing-btn">&times;</button>
+            </div>
+            <div class="budget-summary" id="budgetSummary">
+                <div class="budget-total-card">
+                    <span class="budget-label">Total Spent</span>
+                    <span class="budget-value" id="budgetTotalSpent">$0.00</span>
+                </div>
+                <div class="budget-total-card">
+                    <span class="budget-label">Budget</span>
+                    <span class="budget-value" id="budgetLimit">$0.00</span>
+                </div>
+                <div class="budget-total-card">
+                    <span class="budget-label">Remaining</span>
+                    <span class="budget-value" id="budgetRemaining">$0.00</span>
+                </div>
+            </div>
+            <div id="budgetChartContainer" class="budget-chart-container">
+                <canvas id="budgetChart" width="300" height="300"></canvas>
+            </div>
+            <div class="expense-form">
+                <h4>Add Expense</h4>
+                <div class="expense-form-grid">
+                    <input type="text" id="expenseDesc" placeholder="Description (e.g., Lunch at cafe)">
+                    <input type="number" id="expenseAmount" placeholder="Amount" step="0.01" min="0">
+                    <select id="expenseCategory">
+                        <option value="food">🍽️ Food</option>
+                        <option value="transport">🚗 Transport</option>
+                        <option value="accommodation">🏨 Accommodation</option>
+                        <option value="activities">🎭 Activities</option>
+                        <option value="shopping">🛍️ Shopping</option>
+                        <option value="other">📦 Other</option>
+                    </select>
+                    <button type="button" id="addExpenseBtn" class="export-btn export-packing">+ Add</button>
+                </div>
+            </div>
+            <div id="expensesList" class="expenses-list"></div>
         </div>
     </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+    <!-- html2canvas for capturing itinerary as image -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Main Script -->
+    <!-- Chart.js for budget pie chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Main Script -->
     <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+                    .then(reg => console.log('[PWA] Service Worker registered:', reg.scope))
+                    .catch(err => console.warn('[PWA] SW registration failed:', err));
+            });
+        }
+    </script>
 </body>
-</html>
+</html>

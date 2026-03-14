@@ -22,6 +22,7 @@ wheels/
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -52,6 +53,17 @@ Thumbs.db
 *.log
 logs/
 
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+
+# Python tooling caches
+.mypy_cache/
+.ruff_cache/
+
 # Database
 *.db
 *.sqlite
@@ -74,6 +86,7 @@ serviceAccountKey.json
 
 # Node modules (if any)
 node_modules/
+package-lock.json
 
 # Temporary files
 *.tmp

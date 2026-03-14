@@ -27,6 +27,8 @@ def main():
     backend_dir = os.path.join(os.path.dirname(__file__), 'backend')
     if os.path.exists(backend_dir):
         os.chdir(backend_dir)
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
         print(f"📁 Changed to directory: {os.getcwd()}")
     else:
         print("❌ Backend directory not found!")
@@ -39,7 +41,7 @@ def main():
     try:
         from app import app
         print("🚀 Starting Flask server...")
-        app.run(host='localhost', port=5000, debug=True)
+        app.run(host='localhost', port=5000, debug=True, use_reloader=False)
     except ImportError as e:
         print(f"❌ Error importing Flask app: {e}")
         print("Make sure you're in the correct directory and have Flask installed")

@@ -69,6 +69,54 @@ CREATE TABLE comments (
     FOREIGN KEY (post_id) REFERENCES blog_posts (id)
 );
 
+-- ============================================
+-- PHASE 2 TABLES
+-- ============================================
+
+-- Saved itineraries with shareable links
+CREATE TABLE IF NOT EXISTS saved_itineraries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT,
+    share_token TEXT UNIQUE NOT NULL,
+    destination TEXT NOT NULL,
+    duration TEXT,
+    budget TEXT,
+    purpose TEXT,
+    preferences TEXT, -- JSON string
+    itinerary_html TEXT NOT NULL,
+    itinerary_data TEXT, -- JSON structured data
+    is_public INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Trip expenses for budget tracking
+CREATE TABLE IF NOT EXISTS trip_expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    itinerary_id INTEGER,
+    category TEXT NOT NULL, -- food, transport, accommodation, activities, shopping, other
+    description TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT DEFAULT 'USD',
+    date TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
+-- Digital passport - country stamps
+CREATE TABLE IF NOT EXISTS digital_passport (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    country TEXT NOT NULL,
+    country_code TEXT, -- ISO 3166-1 alpha-2
+    visited_date TEXT,
+    trip_notes TEXT,
+    stamp_type TEXT DEFAULT 'visited', -- visited, blogged, wishlisted
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(firebase_uid, country, stamp_type)
+);
+
 -- Insert sample destinations
 INSERT INTO destinations (name, description, category, image_url, location, country, rating) VALUES
 ('Maldives', 'Relax on stunning white beaches and explore coral reefs.', 'beach', '/static/images/maldives.jpg', 'Maldives', 'Maldives', 4.8),
@@ -78,4 +126,4 @@ INSERT INTO destinations (name, description, category, image_url, location, coun
 ('Paris', 'The city of love with iconic landmarks and cuisine.', 'cultural', '/static/images/paris.jpg', 'Paris', 'France', 4.7),
 ('Tokyo', 'Modern metropolis with traditional culture and amazing food.', 'cultural', '/static/images/tokyo.jpg', 'Tokyo', 'Japan', 4.8),
 ('Bali', 'Tropical paradise with beautiful temples and beaches.', 'beach', '/static/images/bali.jpg', 'Bali', 'Indonesia', 4.6),
-('New York', 'The city that never sleeps with endless attractions.', 'urban', '/static/images/newyork.jpg', 'New York', 'USA', 4.5);
+('New York', 'The city that never sleeps with endless attractions.', 'urban', '/static/images/newyork.jpg', 'New York', 'USA', 4.5);

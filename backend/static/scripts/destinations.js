@@ -1,3 +1,5 @@
+import { onAuthStateChange } from './firebase-auth.js';
+
 document.addEventListener("DOMContentLoaded", function () {
     console.log("Destinations page loaded!");
 
@@ -5,29 +7,25 @@ document.addEventListener("DOMContentLoaded", function () {
     let allDestinations = [];
     let userWishlist = [];
 
-    // Initialize Firebase auth state listener
-    if (typeof window.firebase !== 'undefined') {
-        // Firebase auth state listener will be handled by the main script
-        // We'll check for user state periodically
-        checkAuthState();
-    }
+    initAuthStateListener();
 
     // Load destinations from API
     loadDestinations();
 
-    async function checkAuthState() {
-        // This will be called by the main Firebase auth system
-        // For now, we'll check if user is logged in via a simple method
-        try {
-            const response = await fetch('/api/auth-check');
-            if (response.ok) {
-                const userData = await response.json();
-                currentUser = userData;
-                loadUserWishlist();
+    function initAuthStateListener() {
+        onAuthStateChange(async (user) => {
+            if (user) {
+                currentUser = { uid: user.uid, email: user.email };
+                await loadUserWishlist();
+            } else {
+                currentUser = null;
+                userWishlist = [];
             }
-        } catch (error) {
-            console.log('User not authenticated');
-        }
+
+            if (allDestinations.length > 0) {
+                displayDestinations(allDestinations);
+            }
+        });
     }
 
     async function loadDestinations() {
@@ -51,7 +49,9 @@ document.addEventListener("DOMContentLoaded", function () {
             const response = await fetch(`/api/wishlist/${currentUser.uid}`);
             if (response.ok) {
                 userWishlist = await response.json();
-                updateWishlistButtons();
+                if (allDestinations.length > 0) {
+                    displayDestinations(allDestinations);
+                }
             }
         } catch (error) {
             console.error('Error loading wishlist:', error);
@@ -66,7 +66,7 @@ document.addEventListener("DOMContentLoaded", function () {
             const isInWishlist = wishlistDestinationIds.includes(dest.id);
             return `
                 <div class="destination-card" data-category="${dest.category}" data-id="${dest.id}">
-                    <img src="${dest.image_url}" alt="${dest.name}" onerror="this.src='/static/images/placeholder.jpg'">
+                    <img src="${dest.image_url}" alt="${dest.name}" onerror="this.src='/static/images/logo.jpg'">
                     <div class="destination-content">
                         <h3>${dest.name}</h3>
                         <p>${dest.description}</p>

@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import logging
 import requests  # Import requests for weather API
 import random
@@ -8,16 +9,21 @@ import sqlite3
 import time
 from datetime import datetime, timedelta  # Import datetime for blog post timestamps
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
 import google.generativeai as genai
-from prompts import generate_itinerary_prompt, format_itinerary_response  # Import the functions
+from prompts import generate_itinerary_prompt, format_itinerary_response, generate_packing_list_prompt, parse_json_response  # Import the functions
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_mail import Mail, Message
 from flask_dance.contrib.google import make_google_blueprint, google
 
 # Add the project root directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+
+# Load environment variables from project root .env (if present)
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -143,6 +149,27 @@ def firebase_test():
 def localhost_test():
     """Route for testing Firebase authentication on localhost."""
     return render_template('localhost-test.html')
+
+
+@app.route('/api/auth-check', methods=['GET'])
+def auth_check():
+    """Return lightweight auth status used by frontend compatibility checks."""
+    firebase_uid = request.headers.get('X-Firebase-UID') or request.args.get('uid')
+    if firebase_uid:
+        return jsonify({
+            'authenticated': True,
+            'uid': firebase_uid,
+            'provider': 'firebase-client'
+        })
+
+    if 'user' in session:
+        return jsonify({
+            'authenticated': True,
+            'uid': session['user'],
+            'provider': 'flask-session'
+        })
+
+    return jsonify({'authenticated': False}), 401
 
 # Profile and Wishlist API Routes
 @app.route('/api/profile/<firebase_uid>', methods=['GET'])
@@ -365,16 +392,19 @@ def generate_itinerary():
 
     logging.info(f"Generating itinerary for destination: {destination}")
 
+    itinerary_data = None  # Raw JSON data for map rendering
+
     try:
         # Record the API call for rate limiting
         record_api_call()
 
         # Generate the prompt using the function from prompts.py
         prompt = generate_itinerary_prompt(destination, budget, duration, purpose, preferences)
-        logging.info(f"Generated prompt: {prompt}")
+        logging.info(f"Generated prompt (first 200 chars): {prompt[:200]}")
 
         # Get the response from the Gemini API with retry logic
         max_retries = 3
+        itinerary_text = "No response from AI."
         for attempt in range(max_retries):
             try:
                 response = model.generate_content(prompt)
@@ -394,6 +424,9 @@ def generate_itinerary():
                         }), 429
                 else:
                     raise api_error
+
+        # Try to parse structured JSON for map data
+        itinerary_data = parse_json_response(itinerary_text)
 
         # Format the itinerary using the function from prompts.py
         formatted_itinerary = format_itinerary_response(itinerary_text)
@@ -428,7 +461,422 @@ def generate_itinerary():
             </div>
             """
 
-    return jsonify({"itinerary": formatted_itinerary})
+    result = {"itinerary": formatted_itinerary}
+    if itinerary_data:
+        result["itinerary_data"] = itinerary_data
+    return jsonify(result)
+
+
+@app.route('/generate-packing-list', methods=['POST'])
+def generate_packing_list():
+    """Generate an AI-powered packing list based on trip details."""
+    data = request.json
+
+    # Check rate limits
+    can_proceed, rate_limit_error = check_rate_limit()
+    if not can_proceed:
+        return jsonify({"error": rate_limit_error}), 429
+
+    destination = data.get("destination", "").strip()
+    duration = data.get("duration", "").strip()
+    purpose = data.get("purpose", "").strip()
+    preferences = data.get("preferences", [])
+
+    if not destination or not duration:
+        return jsonify({"error": "Destination and duration are required"}), 400
+
+    # Optionally fetch weather data for smarter packing suggestions
+    weather_info = None
+    try:
+        weather_url = f"http://api.openweathermap.org/data/2.5/weather?q={destination}&appid={WEATHER_API_KEY}&units=metric"
+        weather_response = requests.get(weather_url, timeout=5)
+        if weather_response.status_code == 200:
+            wd = weather_response.json()
+            weather_info = {
+                "temperature": wd["main"]["temp"],
+                "description": wd["weather"][0]["description"],
+                "humidity": wd["main"]["humidity"]
+            }
+    except Exception as e:
+        logging.warning(f"Could not fetch weather for packing list: {e}")
+
+    try:
+        record_api_call()
+        prompt = generate_packing_list_prompt(destination, duration, purpose, preferences, weather_info)
+
+        response = model.generate_content(prompt)
+        response_text = response.text.strip() if response and response.text else ""
+
+        packing_data = parse_json_response(response_text)
+        if packing_data and 'categories' in packing_data:
+            return jsonify({"packing_list": packing_data})
+        else:
+            return jsonify({"error": "Could not parse packing list. Please try again."}), 500
+
+    except Exception as e:
+        error_message = str(e)
+        logging.error(f"Error generating packing list: {error_message}")
+        if "429" in error_message or "quota" in error_message.lower():
+            return jsonify({"error": "API quota exceeded. Please try again later."}), 429
+        return jsonify({"error": "Failed to generate packing list"}), 500
+
+
+# ==================== PHASE 2 - SHAREABLE ITINERARY LINKS ====================
+
+def ensure_phase2_tables():
+    """Create Phase 2 tables if they don't exist."""
+    conn = get_db_connection()
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS saved_itineraries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT,
+            share_token TEXT UNIQUE NOT NULL,
+            destination TEXT NOT NULL,
+            duration TEXT,
+            budget TEXT,
+            purpose TEXT,
+            preferences TEXT,
+            itinerary_html TEXT NOT NULL,
+            itinerary_data TEXT,
+            is_public INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS trip_expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT NOT NULL,
+            itinerary_id INTEGER,
+            category TEXT NOT NULL,
+            description TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT DEFAULT 'USD',
+            date TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
+        CREATE TABLE IF NOT EXISTS digital_passport (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT NOT NULL,
+            country TEXT NOT NULL,
+            country_code TEXT,
+            visited_date TEXT,
+            trip_notes TEXT,
+            stamp_type TEXT DEFAULT 'visited',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(firebase_uid, country, stamp_type)
+        );
+    ''')
+    conn.close()
+
+# Auto-create Phase 2 tables on startup
+ensure_phase2_tables()
+
+
+def generate_share_token():
+    """Generate a unique share token."""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+
+
+@app.route('/api/save-itinerary', methods=['POST'])
+def save_itinerary():
+    """Save an itinerary and generate a shareable link."""
+    data = request.json
+    share_token = generate_share_token()
+
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            '''INSERT INTO saved_itineraries
+               (firebase_uid, share_token, destination, duration, budget, purpose,
+                preferences, itinerary_html, itinerary_data, is_public)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (
+                data.get('firebase_uid', ''),
+                share_token,
+                data.get('destination', ''),
+                data.get('duration', ''),
+                data.get('budget', ''),
+                data.get('purpose', ''),
+                json.dumps(data.get('preferences', [])),
+                data.get('itinerary_html', ''),
+                json.dumps(data.get('itinerary_data', {})),
+                1 if data.get('is_public', True) else 0
+            )
+        )
+        conn.commit()
+        conn.close()
+
+        share_url = f"{request.host_url}shared/{share_token}"
+        return jsonify({
+            "share_token": share_token,
+            "share_url": share_url,
+            "message": "Itinerary saved successfully!"
+        }), 201
+    except Exception as e:
+        logging.error(f"Error saving itinerary: {e}")
+        return jsonify({"error": "Failed to save itinerary"}), 500
+
+
+@app.route('/shared/<share_token>')
+def view_shared_itinerary(share_token):
+    """View a shared itinerary by its token."""
+    try:
+        conn = get_db_connection()
+        itinerary = conn.execute(
+            'SELECT * FROM saved_itineraries WHERE share_token = ? AND is_public = 1',
+            (share_token,)
+        ).fetchone()
+        conn.close()
+
+        if not itinerary:
+            return "Itinerary not found or is not public.", 404
+
+        return render_template('shared_itinerary.html', itinerary=dict(itinerary))
+    except Exception as e:
+        logging.error(f"Error viewing shared itinerary: {e}")
+        return "Error loading itinerary", 500
+
+
+@app.route('/api/shared/<share_token>', methods=['GET'])
+def get_shared_itinerary_data(share_token):
+    """Get shared itinerary data as JSON."""
+    try:
+        conn = get_db_connection()
+        itinerary = conn.execute(
+            'SELECT * FROM saved_itineraries WHERE share_token = ? AND is_public = 1',
+            (share_token,)
+        ).fetchone()
+        conn.close()
+
+        if not itinerary:
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        result = dict(itinerary)
+        # Parse JSON fields
+        if result.get('itinerary_data'):
+            try:
+                result['itinerary_data'] = json.loads(result['itinerary_data'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if result.get('preferences'):
+            try:
+                result['preferences'] = json.loads(result['preferences'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return jsonify(result)
+    except Exception as e:
+        logging.error(f"Error getting shared itinerary: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+@app.route('/api/my-itineraries/<firebase_uid>', methods=['GET'])
+def get_my_itineraries(firebase_uid):
+    """Get all saved itineraries for a user."""
+    try:
+        conn = get_db_connection()
+        itineraries = conn.execute(
+            'SELECT id, share_token, destination, duration, budget, purpose, is_public, created_at FROM saved_itineraries WHERE firebase_uid = ? ORDER BY created_at DESC',
+            (firebase_uid,)
+        ).fetchall()
+        conn.close()
+        return jsonify([dict(row) for row in itineraries])
+    except Exception as e:
+        logging.error(f"Error getting user itineraries: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+# ==================== PHASE 2 - BUDGET TRACKER ====================
+
+@app.route('/api/expenses/<firebase_uid>', methods=['GET'])
+def get_expenses(firebase_uid):
+    """Get all expenses for a user, optionally filtered by itinerary."""
+    itinerary_id = request.args.get('itinerary_id')
+    try:
+        conn = get_db_connection()
+        if itinerary_id:
+            expenses = conn.execute(
+                'SELECT * FROM trip_expenses WHERE firebase_uid = ? AND itinerary_id = ? ORDER BY date DESC',
+                (firebase_uid, itinerary_id)
+            ).fetchall()
+        else:
+            expenses = conn.execute(
+                'SELECT * FROM trip_expenses WHERE firebase_uid = ? ORDER BY date DESC',
+                (firebase_uid,)
+            ).fetchall()
+        conn.close()
+
+        expenses_list = [dict(e) for e in expenses]
+        total = sum(e['amount'] for e in expenses_list)
+        by_category = {}
+        for e in expenses_list:
+            cat = e.get('category', 'other')
+            by_category[cat] = by_category.get(cat, 0) + e['amount']
+
+        return jsonify({
+            "expenses": expenses_list,
+            "total": round(total, 2),
+            "by_category": by_category
+        })
+    except Exception as e:
+        logging.error(f"Error getting expenses: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+@app.route('/api/expenses', methods=['POST'])
+def add_expense():
+    """Add a new expense."""
+    data = request.json
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            '''INSERT INTO trip_expenses (firebase_uid, itinerary_id, category, description, amount, currency, date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (
+                data.get('firebase_uid', ''),
+                data.get('itinerary_id'),
+                data.get('category', 'other'),
+                data.get('description', ''),
+                float(data.get('amount', 0)),
+                data.get('currency', 'USD'),
+                data.get('date', datetime.now().strftime('%Y-%m-%d'))
+            )
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Expense added"}), 201
+    except Exception as e:
+        logging.error(f"Error adding expense: {e}")
+        return jsonify({"error": "Failed to add expense"}), 500
+
+
+@app.route('/api/expenses/<int:expense_id>', methods=['DELETE'])
+def delete_expense(expense_id):
+    """Delete an expense."""
+    try:
+        conn = get_db_connection()
+        conn.execute('DELETE FROM trip_expenses WHERE id = ?', (expense_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Expense deleted"})
+    except Exception as e:
+        logging.error(f"Error deleting expense: {e}")
+        return jsonify({"error": "Failed to delete expense"}), 500
+
+
+# ==================== PHASE 2 - CURRENCY CONVERTER ====================
+
+@app.route('/api/exchange-rates', methods=['GET'])
+def get_exchange_rates():
+    """Get live exchange rates using a free API."""
+    base = request.args.get('base', 'USD')
+    try:
+        # Using exchangerate.host (free, no key required)
+        url = f"https://api.exchangerate.host/latest?base={base}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return jsonify({
+                "base": data.get("base", base),
+                "rates": data.get("rates", {}),
+                "date": data.get("date", "")
+            })
+        else:
+            # Fallback: use static common rates
+            return jsonify({
+                "base": base,
+                "rates": {
+                    "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 149.5,
+                    "INR": 83.1, "AUD": 1.53, "CAD": 1.36, "CHF": 0.88,
+                    "CNY": 7.24, "THB": 35.4, "AED": 3.67, "SGD": 1.34,
+                    "MYR": 4.72, "IDR": 15600, "PHP": 56.2, "KRW": 1320
+                },
+                "date": datetime.now().strftime('%Y-%m-%d'),
+                "note": "Using cached rates"
+            })
+    except Exception as e:
+        logging.warning(f"Exchange rate API error: {e}")
+        return jsonify({
+            "base": "USD",
+            "rates": {
+                "USD": 1.0, "EUR": 0.92, "GBP": 0.79, "JPY": 149.5,
+                "INR": 83.1, "AUD": 1.53, "CAD": 1.36, "CHF": 0.88
+            },
+            "date": datetime.now().strftime('%Y-%m-%d'),
+            "note": "Using cached rates (API unavailable)"
+        })
+
+
+# ==================== PHASE 2 - DIGITAL PASSPORT ====================
+
+@app.route('/api/passport/<firebase_uid>', methods=['GET'])
+def get_passport(firebase_uid):
+    """Get digital passport data for a user."""
+    try:
+        conn = get_db_connection()
+        stamps = conn.execute(
+            'SELECT * FROM digital_passport WHERE firebase_uid = ? ORDER BY visited_date DESC',
+            (firebase_uid,)
+        ).fetchall()
+        conn.close()
+
+        stamps_list = [dict(s) for s in stamps]
+        unique_countries = list(set(s['country'] for s in stamps_list))
+
+        return jsonify({
+            "stamps": stamps_list,
+            "countries_visited": len(unique_countries),
+            "country_list": unique_countries,
+            "level": get_traveler_level(len(unique_countries))
+        })
+    except Exception as e:
+        logging.error(f"Error getting passport: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+@app.route('/api/passport/stamp', methods=['POST'])
+def add_stamp():
+    """Add a country stamp to the digital passport."""
+    data = request.json
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            '''INSERT OR IGNORE INTO digital_passport
+               (firebase_uid, country, country_code, visited_date, trip_notes, stamp_type)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (
+                data.get('firebase_uid', ''),
+                data.get('country', ''),
+                data.get('country_code', ''),
+                data.get('visited_date', datetime.now().strftime('%Y-%m-%d')),
+                data.get('trip_notes', ''),
+                data.get('stamp_type', 'visited')
+            )
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Stamp added!"}), 201
+    except Exception as e:
+        logging.error(f"Error adding stamp: {e}")
+        return jsonify({"error": "Failed to add stamp"}), 500
+
+
+def get_traveler_level(countries_count):
+    """Determine traveler level based on countries visited."""
+    if countries_count >= 50:
+        return {"title": "🌍 Globe Trotter Legend", "level": 10, "badge": "🏆"}
+    elif countries_count >= 30:
+        return {"title": "🗺️ World Explorer", "level": 8, "badge": "🥇"}
+    elif countries_count >= 20:
+        return {"title": "✈️ Seasoned Voyager", "level": 6, "badge": "🥈"}
+    elif countries_count >= 10:
+        return {"title": "🧭 Rising Explorer", "level": 4, "badge": "🥉"}
+    elif countries_count >= 5:
+        return {"title": "🎒 Active Adventurer", "level": 3, "badge": "⭐"}
+    elif countries_count >= 1:
+        return {"title": "🌱 Budding Traveler", "level": 1, "badge": "🌟"}
+    else:
+        return {"title": "🏠 Armchair Explorer", "level": 0, "badge": "🔰"}
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
@@ -670,26 +1118,31 @@ def api_search():
     query = request.args.get('query', '').strip().lower()
     results = []
 
-    # Hardcoded destinations (should match those in destinations.html)
-    destinations = [
-        {'name': 'Maldives', 'category': 'beach', 'url': '/destinations#Maldives'},
-        {'name': 'Rome', 'category': 'historical', 'url': '/destinations#Rome'},
-        {'name': 'Mount Everest', 'category': 'adventure', 'url': '/destinations#Mount_Everest'},
-        {'name': 'Dubai', 'category': 'luxury', 'url': '/destinations#Dubai'},
-    ]
+    if not query:
+        return jsonify(results)
 
-    # Search destinations
-    for dest in destinations:
-        if query in dest['name'].lower():
+    try:
+        conn = get_db_connection()
+
+        # Search destinations from database
+        destinations = conn.execute(
+            '''SELECT name, category
+               FROM destinations
+               WHERE LOWER(name) LIKE ? OR LOWER(country) LIKE ? OR LOWER(location) LIKE ?
+               ORDER BY rating DESC, name ASC
+               LIMIT 10''',
+            (f"%{query}%", f"%{query}%", f"%{query}%")
+        ).fetchall()
+
+        for dest in destinations:
+            anchor = dest['name'].replace(' ', '_')
             results.append({
                 'type': 'Destination',
                 'name': dest['name'],
-                'url': dest['url']
+                'url': f"/destinations#{anchor}"
             })
 
-    # Search blog posts from the database
-    try:
-        conn = get_db_connection()
+        # Search blog posts from the database
         posts = conn.execute('SELECT id, title FROM blog_posts').fetchall()
         for post in posts:
             if query in post['title'].lower():
