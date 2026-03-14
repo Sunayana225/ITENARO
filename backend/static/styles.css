@@ -1741,6 +1741,12 @@ h2 {
     border-color: #ff7f50;
 }
 
+.export-journal:hover {
+    background: #0f766e;
+    color: white;
+    border-color: #0f766e;
+}
+
 .export-icon {
     font-size: 1.15rem;
 }
@@ -2708,9 +2714,142 @@ h2 {
     color: #e74c3c;
 }
 
+/* ============================================
+   TRIP JOURNAL STYLES
+   ============================================ */
+
+.journal-panel {
+    width: 70% !important;
+    max-width: 1000px;
+    animation: slideUp 0.4s ease;
+}
+
+.journal-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.journal-tone-group {
+    min-width: 170px;
+}
+
+.journal-tone-group label {
+    display: block;
+    font-size: 0.84rem;
+    color: #666;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.journal-tone-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 2px solid #e0e0e0;
+    font-size: 0.92rem;
+}
+
+.journal-tone-group select:focus {
+    outline: none;
+    border-color: #0f766e;
+}
+
+.journal-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.journal-form-grid input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 2px solid #e0e0e0;
+    font-size: 0.94rem;
+}
+
+.journal-form-grid input:focus {
+    outline: none;
+    border-color: #0f766e;
+}
+
+.journal-content-input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 180px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 2px solid #e0e0e0;
+    resize: vertical;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin-bottom: 12px;
+}
+
+.journal-content-input:focus {
+    outline: none;
+    border-color: #0f766e;
+}
+
+.journal-highlights {
+    background: #f0fdfa;
+    border: 1.5px solid #99f6e4;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+}
+
+.journal-highlights h4 {
+    margin: 0 0 8px 0;
+    color: #0f766e;
+    font-size: 0.95rem;
+}
+
+.journal-highlights ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.journal-highlights li {
+    margin-bottom: 6px;
+    color: #4a4a4a;
+    font-size: 0.9rem;
+}
+
+.journal-status {
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.88rem;
+    border: 1px solid transparent;
+}
+
+.journal-status.success {
+    background: #ecfdf3;
+    color: #166534;
+    border-color: #86efac;
+}
+
+.journal-status.warning {
+    background: #fffbeb;
+    color: #854d0e;
+    border-color: #fcd34d;
+}
+
+.journal-status.error {
+    background: #fef2f2;
+    color: #991b1b;
+    border-color: #fca5a5;
+}
+
 @media (max-width: 900px) {
     .currency-panel,
-    .budget-panel {
+    .budget-panel,
+    .journal-panel {
         width: 95% !important;
     }
 
@@ -2724,5 +2863,14 @@ h2 {
 
     .expense-form-grid {
         flex-direction: column;
+    }
+
+    .journal-toolbar {
+        align-items: stretch;
+    }
+
+    .journal-toolbar .export-btn {
+        width: 100%;
+        justify-content: center;
     }
 }

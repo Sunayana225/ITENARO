@@ -139,6 +139,9 @@
                 <button type="button" id="saveLinkBtn" class="export-btn export-share" title="Save & Get Shareable Link">
                     <span class="export-icon">💾</span> Save Link
                 </button>
+                <button type="button" id="journalBtn" class="export-btn export-journal" title="AI Trip Journal">
+                    <span class="export-icon">📝</span> Journal
+                </button>
                 <button type="button" id="currencyBtn" class="export-btn export-calendar" title="Currency Converter">
                     <span class="export-icon">💱</span> Currency
                 </button>
@@ -299,6 +302,34 @@
                 </div>
             </div>
             <div id="expensesList" class="expenses-list"></div>
+        </div>
+
+        <!-- Trip Journal Panel -->
+        <div id="journalPanel" class="container journal-panel" style="display: none;">
+            <div class="packing-header">
+                <h2>📝 AI Trip Journal</h2>
+                <button type="button" id="closeJournalBtn" class="close-packing-btn">&times;</button>
+            </div>
+            <div class="journal-toolbar">
+                <div class="journal-tone-group">
+                    <label for="journalTone">Tone</label>
+                    <select id="journalTone">
+                        <option value="vivid">Vivid</option>
+                        <option value="reflective">Reflective</option>
+                        <option value="minimal">Minimal</option>
+                        <option value="professional">Professional</option>
+                    </select>
+                </div>
+                <button type="button" id="generateJournalBtn" class="export-btn export-packing">Generate Recap</button>
+                <button type="button" id="publishJournalBtn" class="export-btn export-share">Publish to Blog</button>
+            </div>
+            <div class="journal-form-grid">
+                <input type="text" id="journalTitle" placeholder="Journal title">
+                <input type="text" id="journalTags" placeholder="Tags (comma separated)">
+            </div>
+            <textarea id="journalContent" class="journal-content-input" rows="8" placeholder="Your trip recap will appear here."></textarea>
+            <div id="journalHighlights" class="journal-highlights" style="display: none;"></div>
+            <div id="journalStatus" class="journal-status" style="display: none;"></div>
         </div>
     </div>
 

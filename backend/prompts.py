@@ -192,6 +192,52 @@ IMPORTANT RULES:
     return prompt
 
 
+def generate_trip_journal_prompt(destination, purpose, itinerary_data, tone="vivid", max_words=280):
+    """Builds a prompt for generating a reflective trip journal recap."""
+    try:
+        max_words = int(max_words)
+    except (TypeError, ValueError):
+        max_words = 280
+
+    max_words = max(120, min(max_words, 700))
+    destination = (destination or itinerary_data.get("destination") or "your trip").strip()
+    purpose = (purpose or "").strip()
+    tone = (tone or "vivid").strip().lower()
+    itinerary_json = json.dumps(itinerary_data, ensure_ascii=False, indent=2)
+
+    prompt = f"""You are a travel storyteller. Write a polished first-person trip recap for {destination}.
+Purpose of trip: {purpose or 'General travel'}
+Requested tone: {tone}
+Maximum length: {max_words} words
+
+Source itinerary JSON:
+{itinerary_json}
+
+IMPORTANT: You MUST respond with ONLY valid JSON (no markdown, no code fences, no extra text).
+Use this exact structure:
+
+{{
+  "title": "A catchy journal title",
+  "recap": "A cohesive recap paragraph (or two short paragraphs) in first person.",
+  "highlights": [
+    "Highlight 1",
+    "Highlight 2",
+    "Highlight 3"
+  ],
+  "takeaway": "A one-line reflection or lesson from the trip"
+}}
+
+Requirements:
+1. Keep the recap under {max_words} words.
+2. Mention specific places or activities from the itinerary.
+3. Keep highlights concise (3-6 items).
+4. Do not invent unrealistic claims.
+5. Return JSON only.
+"""
+
+    return prompt
+
+
 def parse_json_response(response_text):
     """
     Attempts to parse JSON from the Gemini response, handling markdown code fences.

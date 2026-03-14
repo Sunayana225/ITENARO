@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const totalSteps = 5;
     let selectedPreferences = [];
     let currentItineraryData = null; // Store structured itinerary data
+    let lastSavedItineraryId = null;
+    let latestJournal = null;
     let currentDayToReplan = null;
     let currentEvents = [];
     let itineraryMap = null; // Leaflet map instance
@@ -39,6 +41,17 @@ document.addEventListener("DOMContentLoaded", function () {
     const eventsPanel = document.getElementById("eventsPanel");
     const eventsList = document.getElementById("eventsList");
     const eventsCategoryFilter = document.getElementById("eventsCategoryFilter");
+    const journalBtn = document.getElementById("journalBtn");
+    const journalPanel = document.getElementById("journalPanel");
+    const closeJournalBtn = document.getElementById("closeJournalBtn");
+    const generateJournalBtn = document.getElementById("generateJournalBtn");
+    const publishJournalBtn = document.getElementById("publishJournalBtn");
+    const journalTone = document.getElementById("journalTone");
+    const journalTitleInput = document.getElementById("journalTitle");
+    const journalTagsInput = document.getElementById("journalTags");
+    const journalContentInput = document.getElementById("journalContent");
+    const journalHighlights = document.getElementById("journalHighlights");
+    const journalStatus = document.getElementById("journalStatus");
 
     function updateSyncIndicator(label = "", timestamp = null) {
         if (!syncIndicator) return;
@@ -444,6 +457,245 @@ document.addEventListener("DOMContentLoaded", function () {
         highlightReplannedDay(dayNumber);
     }
 
+    function getJournalDefaultTitle() {
+        const destination = (document.getElementById('destination')?.value || '').trim();
+        return destination ? `${destination} Trip Journal` : 'My Trip Journal';
+    }
+
+    function getJournalDefaultTags() {
+        const destination = (document.getElementById('destination')?.value || '').trim();
+        return destination ? `${destination}, trip-journal, ai-recap` : 'trip-journal, ai-recap';
+    }
+
+    function clearJournalStatus() {
+        if (!journalStatus) return;
+        journalStatus.style.display = 'none';
+        journalStatus.textContent = '';
+        journalStatus.className = 'journal-status';
+    }
+
+    function showJournalStatus(message, type = 'success') {
+        if (!journalStatus) return;
+        journalStatus.textContent = message;
+        journalStatus.className = `journal-status ${type}`;
+        journalStatus.style.display = 'block';
+    }
+
+    function renderJournalHighlights(highlights) {
+        if (!journalHighlights) return;
+
+        if (!Array.isArray(highlights) || highlights.length === 0) {
+            journalHighlights.style.display = 'none';
+            journalHighlights.innerHTML = '';
+            return;
+        }
+
+        journalHighlights.innerHTML = '';
+        const heading = document.createElement('h4');
+        heading.textContent = 'Highlights';
+        const list = document.createElement('ul');
+
+        highlights.forEach(item => {
+            const text = String(item || '').trim();
+            if (!text) return;
+            const li = document.createElement('li');
+            li.textContent = text;
+            list.appendChild(li);
+        });
+
+        if (!list.children.length) {
+            journalHighlights.style.display = 'none';
+            return;
+        }
+
+        journalHighlights.appendChild(heading);
+        journalHighlights.appendChild(list);
+        journalHighlights.style.display = 'block';
+    }
+
+    function openJournalPanel() {
+        if (!journalPanel) return;
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days) || !currentItineraryData.days.length) {
+            alert('Generate an itinerary first before creating a trip journal.');
+            return;
+        }
+
+        journalPanel.style.display = 'block';
+        journalPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        if (journalTitleInput && !journalTitleInput.value.trim()) {
+            journalTitleInput.value = getJournalDefaultTitle();
+        }
+        if (journalTagsInput && !journalTagsInput.value.trim()) {
+            journalTagsInput.value = getJournalDefaultTags();
+        }
+    }
+
+    function closeJournalPanel() {
+        if (!journalPanel) return;
+        journalPanel.style.display = 'none';
+    }
+
+    async function generateTripJournalRecap() {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days) || !currentItineraryData.days.length) {
+            alert('Generate an itinerary first before creating a trip journal.');
+            return;
+        }
+
+        if (journalPanel && journalPanel.style.display === 'none') {
+            openJournalPanel();
+        }
+
+        const btnLabel = generateJournalBtn?.textContent || 'Generate Recap';
+        if (generateJournalBtn) {
+            generateJournalBtn.disabled = true;
+            generateJournalBtn.textContent = 'Generating...';
+        }
+
+        clearJournalStatus();
+
+        try {
+            const destination = (document.getElementById('destination')?.value || currentItineraryData.destination || '').trim();
+            const purpose = (document.getElementById('purpose')?.value || '').trim();
+            const tone = journalTone?.value || 'vivid';
+
+            const response = await fetch('/api/generate-trip-journal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    itinerary_data: currentItineraryData,
+                    destination,
+                    purpose,
+                    tone,
+                    max_words: 280,
+                }),
+            });
+
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to generate trip journal recap');
+            }
+
+            const journal = payload.journal || {};
+            latestJournal = journal;
+
+            if (journalTitleInput) {
+                journalTitleInput.value = String(journal.title || getJournalDefaultTitle()).trim();
+            }
+            if (journalContentInput) {
+                journalContentInput.value = String(journal.recap || '').trim();
+            }
+            if (journalTagsInput && !journalTagsInput.value.trim()) {
+                journalTagsInput.value = getJournalDefaultTags();
+            }
+
+            renderJournalHighlights(journal.highlights);
+
+            if (payload.source === 'fallback') {
+                showJournalStatus(payload.warning || 'AI recap unavailable. A local recap draft is ready.', 'warning');
+            } else {
+                showJournalStatus('Recap ready. Edit if needed, then publish to blog.', 'success');
+            }
+        } catch (error) {
+            showJournalStatus(error.message || 'Failed to generate trip journal recap.', 'error');
+        } finally {
+            if (generateJournalBtn) {
+                generateJournalBtn.disabled = false;
+                generateJournalBtn.textContent = btnLabel;
+            }
+        }
+    }
+
+    async function publishTripJournalToBlog() {
+        const user = getCurrentUser();
+        if (!user) {
+            alert('Please log in to publish your journal to the blog.');
+            return;
+        }
+
+        const title = (journalTitleInput?.value || '').trim();
+        const content = (journalContentInput?.value || '').trim();
+        if (!title || !content) {
+            showJournalStatus('Title and recap content are required before publishing.', 'error');
+            return;
+        }
+
+        const btnLabel = publishJournalBtn?.textContent || 'Publish to Blog';
+        if (publishJournalBtn) {
+            publishJournalBtn.disabled = true;
+            publishJournalBtn.textContent = 'Publishing...';
+        }
+
+        try {
+            const destination = (document.getElementById('destination')?.value || currentItineraryData?.destination || '').trim();
+            const tags = (journalTagsInput?.value || '')
+                .split(',')
+                .map(tag => tag.trim())
+                .filter(Boolean);
+
+            const payload = {
+                title,
+                content,
+                destination,
+                location: destination,
+                category: 'travel-journal',
+                tags,
+            };
+
+            if (lastSavedItineraryId) {
+                payload.itinerary_id = lastSavedItineraryId;
+            }
+
+            const response = await authJsonFetch('/api/publish-trip-journal', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+
+            const body = await response.json();
+            if (!response.ok) {
+                throw new Error(body.error || 'Failed to publish trip journal');
+            }
+
+            showJournalStatus('Journal published to blog successfully.', 'success');
+
+            if (body.blog_url) {
+                try {
+                    await navigator.clipboard.writeText(body.blog_url);
+                } catch (_clipError) {
+                    // Clipboard permissions may be blocked in some browsers.
+                }
+
+                const openPost = window.confirm(`Trip journal published. Open it now?\n\n${body.blog_url}`);
+                if (openPost) {
+                    window.open(body.blog_url, '_blank', 'noopener');
+                }
+            }
+        } catch (error) {
+            showJournalStatus(error.message || 'Failed to publish trip journal.', 'error');
+        } finally {
+            if (publishJournalBtn) {
+                publishJournalBtn.disabled = false;
+                publishJournalBtn.textContent = btnLabel;
+            }
+        }
+    }
+
+    if (journalBtn) {
+        journalBtn.addEventListener('click', openJournalPanel);
+    }
+
+    if (closeJournalBtn) {
+        closeJournalBtn.addEventListener('click', closeJournalPanel);
+    }
+
+    if (generateJournalBtn) {
+        generateJournalBtn.addEventListener('click', generateTripJournalRecap);
+    }
+
+    if (publishJournalBtn) {
+        publishJournalBtn.addEventListener('click', publishTripJournalToBlog);
+    }
+
     // ============================================
     // GENERATE ITINERARY (Updated with Map + Data)
     // ============================================
@@ -496,9 +748,23 @@ document.addEventListener("DOMContentLoaded", function () {
                 // Store structured data for map/export features
                 if (data.itinerary_data) {
                     currentItineraryData = data.itinerary_data;
+                    lastSavedItineraryId = null;
+                    latestJournal = null;
                     renderItineraryMap(currentItineraryData);
                     injectReplanButtons();
                     persistOfflineItinerary('Generated');
+
+                    if (journalTitleInput) {
+                        journalTitleInput.value = getJournalDefaultTitle();
+                    }
+                    if (journalContentInput) {
+                        journalContentInput.value = '';
+                    }
+                    if (journalTagsInput) {
+                        journalTagsInput.value = getJournalDefaultTags();
+                    }
+                    renderJournalHighlights([]);
+                    clearJournalStatus();
                 }
 
                 // Fetch weather for destination
@@ -1437,6 +1703,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const data = await response.json();
                 if (response.ok && data.share_url) {
+                    if (data.itinerary_id) {
+                        lastSavedItineraryId = data.itinerary_id;
+                    }
                     persistOfflineItinerary('Saved');
                     // Copy to clipboard
                     try {

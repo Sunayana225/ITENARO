@@ -22,6 +22,7 @@ from prompts import (
     format_itinerary_response,
     generate_packing_list_prompt,
     generate_day_replan_prompt,
+    generate_trip_journal_prompt,
     parse_json_response,
 )
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -1130,6 +1131,68 @@ def _fetch_ticketmaster_events(destination, start_date=None, end_date=None):
         return []
 
 
+def _extract_itinerary_highlights(itinerary_data, max_items=6):
+    """Derive concise day-level highlights from itinerary data."""
+    highlights = []
+    days = itinerary_data.get('days') if isinstance(itinerary_data, dict) else []
+    if not isinstance(days, list):
+        return highlights
+
+    for day in days:
+        if not isinstance(day, dict):
+            continue
+
+        day_number = _coerce_positive_int(day.get('day')) or (len(highlights) + 1)
+        title = str(day.get('title') or f"Day {day_number}").strip()
+
+        place_names = []
+        for place in day.get('places') or []:
+            if not isinstance(place, dict):
+                continue
+            name = str(place.get('name') or '').strip()
+            if name:
+                place_names.append(name)
+            if len(place_names) >= 2:
+                break
+
+        if place_names:
+            highlights.append(f"Day {day_number}: {title} - {', '.join(place_names)}")
+        else:
+            highlights.append(f"Day {day_number}: {title}")
+
+        if len(highlights) >= max_items:
+            break
+
+    return highlights
+
+
+def _build_fallback_trip_journal(destination, purpose, itinerary_data):
+    """Create a local recap when AI output is unavailable or malformed."""
+    destination = str(destination or itinerary_data.get('destination') or 'your trip').strip()
+    purpose_text = str(purpose or '').strip()
+    summary = str(itinerary_data.get('summary') or '').strip() if isinstance(itinerary_data, dict) else ''
+    highlights = _extract_itinerary_highlights(itinerary_data, max_items=5)
+
+    intro = f"I recently explored {destination} and the trip felt thoughtfully paced from start to finish."
+    if purpose_text:
+        intro = f"I recently explored {destination} for a {purpose_text.lower()} trip, and each day felt purposeful."
+
+    recap_parts = [summary or intro]
+    if highlights:
+        recap_parts.append("Key moments included " + "; ".join(highlights[:3]) + ".")
+    recap_parts.append(
+        "What stood out most was how the plan balanced iconic spots with local experiences while still leaving room for spontaneity."
+    )
+
+    recap = " ".join(part.strip() for part in recap_parts if part and part.strip())
+    return {
+        'title': f"{destination} Trip Journal",
+        'recap': recap,
+        'highlights': highlights or [f"Explored {destination} with a structured day-by-day plan."],
+        'takeaway': "A flexible plan made the trip more memorable and less stressful.",
+    }
+
+
 @app.route('/api/save-itinerary', methods=['POST'])
 @firebase_auth_required
 def save_itinerary():
@@ -1984,6 +2047,95 @@ def post_blog():
     conn.close()
     return redirect(url_for('blog'))
 
+
+@app.route('/api/publish-trip-journal', methods=['POST'])
+@firebase_auth_required
+def publish_trip_journal():
+    """Publish a generated trip journal directly to the blog."""
+    data = request.json or {}
+    auth_user = _get_authenticated_user(optional=False)
+
+    title = str(data.get('title', '')).strip()
+    content = str(data.get('content') or data.get('recap') or '').strip()
+    destination = str(data.get('destination', '')).strip()
+    location = str(data.get('location', '')).strip() or destination
+    country = str(data.get('country', '')).strip()
+    state = str(data.get('state', '')).strip()
+    category = str(data.get('category', 'travel-journal')).strip() or 'travel-journal'
+    image = str(data.get('image', '')).strip() or '/static/images/default_blog.jpg'
+    itinerary_id = _coerce_positive_int(data.get('itinerary_id'))
+
+    if not title or not content:
+        return jsonify({'error': 'title and content are required'}), 400
+
+    author = str(data.get('author', '')).strip()
+    if not author:
+        email = str(auth_user.get('email') or '').strip()
+        author = email.split('@')[0] if email else f"user-{str(auth_user.get('uid', 'traveler'))[:8]}"
+
+    tags_input = data.get('tags')
+    if isinstance(tags_input, list):
+        tag_values = [str(tag).strip() for tag in tags_input if str(tag).strip()]
+    elif tags_input is not None:
+        tag_values = [tag.strip() for tag in str(tags_input).split(',') if tag.strip()]
+    else:
+        tag_values = []
+
+    if not tag_values:
+        tag_values = ['trip-journal', 'ai-recap']
+    tags = ','.join(tag_values[:10])
+
+    try:
+        conn = get_db_connection()
+
+        if itinerary_id:
+            itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+            if not itinerary:
+                conn.close()
+                return jsonify({'error': 'Itinerary not found'}), 404
+            if not has_access:
+                conn.close()
+                return jsonify({'error': 'Forbidden: you do not have access to this itinerary.'}), 403
+
+            if not destination:
+                destination = str(itinerary['destination'] or '').strip()
+            if not location:
+                location = destination
+
+        if not location:
+            location = destination or 'Travel'
+
+        date_posted = datetime.now().strftime('%Y-%m-%d')
+        cursor = conn.execute(
+            '''INSERT INTO blog_posts
+               (title, content, author, date_posted, location, country, state, category, tags, image)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (title, content, author, date_posted, location, country, state, category, tags, image)
+        )
+        post_id = cursor.lastrowid
+
+        if itinerary_id:
+            _log_itinerary_activity(
+                conn,
+                itinerary_id,
+                auth_user['uid'],
+                'publish_trip_journal',
+                {'post_id': post_id, 'title': title}
+            )
+
+        conn.commit()
+        conn.close()
+
+        blog_url = f"{request.host_url}blog/{post_id}"
+        return jsonify({
+            'message': 'Trip journal published successfully.',
+            'post_id': post_id,
+            'blog_url': blog_url,
+        }), 201
+    except Exception as e:
+        logging.error(f"Error publishing trip journal: {e}")
+        return jsonify({'error': 'Failed to publish trip journal'}), 500
+
 @app.route('/blog/<int:post_id>')
 def blog_post(post_id):
     conn = get_db_connection()
@@ -2174,6 +2326,91 @@ def render_itinerary_from_data():
     except Exception as e:
         logging.error(f"Error rendering itinerary data: {e}")
         return jsonify({"error": "Failed to render itinerary"}), 500
+
+
+@app.route('/api/generate-trip-journal', methods=['POST'])
+def generate_trip_journal():
+    """Generate an AI-powered trip recap journal from itinerary JSON."""
+    data = request.json or {}
+    itinerary_data = data.get('itinerary_data')
+
+    if not isinstance(itinerary_data, dict) or not isinstance(itinerary_data.get('days'), list) or not itinerary_data.get('days'):
+        return jsonify({"error": "itinerary_data must include a non-empty days list."}), 400
+
+    destination = str(data.get('destination') or itinerary_data.get('destination') or '').strip() or 'Your trip'
+    purpose = str(data.get('purpose') or '').strip()
+    tone = str(data.get('tone') or 'vivid').strip().lower() or 'vivid'
+    max_words = _coerce_positive_int(data.get('max_words')) or 280
+    max_words = min(max_words, 700)
+
+    fallback_journal = _build_fallback_trip_journal(destination, purpose, itinerary_data)
+
+    can_proceed, rate_limit_error = check_rate_limit()
+    if not can_proceed:
+        return jsonify({"error": rate_limit_error}), 429
+
+    try:
+        record_api_call()
+        prompt = generate_trip_journal_prompt(
+            destination=destination,
+            purpose=purpose,
+            itinerary_data=itinerary_data,
+            tone=tone,
+            max_words=max_words,
+        )
+        response = model.generate_content(prompt)
+        response_text = response.text.strip() if response and getattr(response, 'text', None) else ''
+        parsed = parse_json_response(response_text)
+
+        if isinstance(parsed, dict):
+            title = str(parsed.get('title') or fallback_journal['title']).strip() or fallback_journal['title']
+            recap = str(parsed.get('recap') or parsed.get('content') or '').strip() or fallback_journal['recap']
+
+            raw_highlights = parsed.get('highlights')
+            highlights = []
+            if isinstance(raw_highlights, list):
+                for item in raw_highlights:
+                    text = str(item).strip()
+                    if text:
+                        highlights.append(text)
+                    if len(highlights) >= 6:
+                        break
+            if not highlights:
+                highlights = fallback_journal['highlights']
+
+            takeaway = str(parsed.get('takeaway') or fallback_journal['takeaway']).strip()
+            journal = {
+                'title': title,
+                'recap': recap,
+                'highlights': highlights,
+                'takeaway': takeaway,
+                'tone': tone,
+                'word_count': len(recap.split()),
+            }
+            return jsonify({'journal': journal, 'source': 'ai'})
+
+        fallback_payload = {
+            **fallback_journal,
+            'tone': tone,
+            'word_count': len(fallback_journal['recap'].split()),
+        }
+        return jsonify({
+            'journal': fallback_payload,
+            'source': 'fallback',
+            'warning': 'AI response could not be parsed. Showing a local recap instead.',
+        })
+    except Exception as e:
+        logging.warning(f"Trip journal generation failed; serving fallback recap: {e}")
+        fallback_payload = {
+            **fallback_journal,
+            'tone': tone,
+            'word_count': len(fallback_journal['recap'].split()),
+        }
+        return jsonify({
+            'journal': fallback_payload,
+            'source': 'fallback',
+            'warning': 'AI recap unavailable. Showing a local recap instead.',
+        })
 
 
 @app.route('/api/travel-price-hints', methods=['GET'])
