@@ -20,7 +20,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const totalSteps = 5;
     let selectedPreferences = [];
     let currentItineraryData = null; // Store structured itinerary data
+    let currentItineraryRevision = 1;
     let lastSavedItineraryId = null;
+    let presenceHeartbeatTimer = null;
+    let latestSyncConflict = null;
     let latestJournal = null;
     let currentDayToReplan = null;
     let currentEvents = [];
@@ -37,6 +40,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const replanSubmitBtn = document.getElementById("replanSubmitBtn");
     const offlineBanner = document.getElementById("offlineBanner");
     const syncIndicator = document.getElementById("syncIndicator");
+    const presenceStrip = document.getElementById("presenceStrip");
+    const syncConflictBanner = document.getElementById("syncConflictBanner");
     const priceHintsBar = document.getElementById("priceHintsBar");
     const eventsPanel = document.getElementById("eventsPanel");
     const eventsList = document.getElementById("eventsList");
@@ -91,6 +96,7 @@ document.addEventListener("DOMContentLoaded", function () {
             budget: document.getElementById('budget')?.value || '',
             duration: document.getElementById('duration')?.value || '',
             purpose: document.getElementById('purpose')?.value || '',
+            revision: currentItineraryRevision || 1,
             saved_at: new Date().toISOString(),
         };
 
@@ -131,6 +137,7 @@ document.addEventListener("DOMContentLoaded", function () {
             if (itineraryContent && payload.itinerary_html) itineraryContent.innerHTML = payload.itinerary_html;
 
             currentItineraryData = payload.itinerary_data;
+            currentItineraryRevision = Number(payload.revision || 1) || 1;
             renderItineraryMap(currentItineraryData);
             injectReplanButtons();
 
@@ -194,6 +201,213 @@ document.addEventListener("DOMContentLoaded", function () {
         return fetch(url, requestOptions);
     }
 
+    function hideSyncConflictBanner() {
+        latestSyncConflict = null;
+        if (!syncConflictBanner) return;
+        syncConflictBanner.style.display = 'none';
+        syncConflictBanner.innerHTML = '';
+    }
+
+    function renderPresenceStrip(activeRows) {
+        if (!presenceStrip) return;
+        if (!Array.isArray(activeRows) || !activeRows.length) {
+            presenceStrip.style.display = 'none';
+            presenceStrip.textContent = '';
+            return;
+        }
+
+        const currentUser = getCurrentUser();
+        const labels = activeRows.slice(0, 6).map(row => {
+            const uid = String(row.firebase_uid || '').trim();
+            const email = String(row.email || '').trim();
+            const status = String(row.status || 'viewing').trim();
+
+            let name = 'Collaborator';
+            if (currentUser && uid && currentUser.uid === uid) {
+                name = 'You';
+            } else if (email.includes('@')) {
+                name = email.split('@')[0];
+            } else if (uid) {
+                name = uid.slice(0, 8);
+            }
+
+            return `${name} (${status})`;
+        });
+
+        const extraCount = activeRows.length - labels.length;
+        const suffix = extraCount > 0 ? ` +${extraCount} more` : '';
+        presenceStrip.textContent = `Active now: ${labels.join(', ')}${suffix}`;
+        presenceStrip.style.display = 'block';
+    }
+
+    async function pushPresenceHeartbeat(status = 'viewing', cursorContext = null) {
+        if (!lastSavedItineraryId) {
+            renderPresenceStrip([]);
+            return;
+        }
+
+        const user = getCurrentUser();
+        if (!user) return;
+
+        try {
+            const response = await authJsonFetch(`/api/itineraries/${lastSavedItineraryId}/presence`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    status,
+                    cursor_context: cursorContext,
+                }),
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to update presence');
+            }
+
+            renderPresenceStrip(payload.active || []);
+        } catch (presenceError) {
+            console.error('Presence heartbeat failed:', presenceError);
+        }
+    }
+
+    function startPresenceHeartbeat() {
+        if (presenceHeartbeatTimer) {
+            clearInterval(presenceHeartbeatTimer);
+            presenceHeartbeatTimer = null;
+        }
+
+        if (!lastSavedItineraryId || !getCurrentUser()) {
+            renderPresenceStrip([]);
+            return;
+        }
+
+        pushPresenceHeartbeat(document.hidden ? 'idle' : 'viewing');
+        presenceHeartbeatTimer = setInterval(() => {
+            pushPresenceHeartbeat(document.hidden ? 'idle' : 'viewing');
+        }, 15000);
+    }
+
+    function applyServerItineraryVersion(latest) {
+        if (!latest || typeof latest !== 'object') return;
+
+        const itinerarySection = document.getElementById('itinerary');
+        const itineraryContent = document.getElementById('itinerary-content');
+        if (itinerarySection) itinerarySection.style.display = 'block';
+
+        if (itineraryContent && typeof latest.itinerary_html === 'string') {
+            itineraryContent.innerHTML = latest.itinerary_html;
+        }
+
+        if (latest.destination && document.getElementById('destination')) {
+            document.getElementById('destination').value = latest.destination;
+        }
+        if (latest.duration && document.getElementById('duration')) {
+            document.getElementById('duration').value = latest.duration;
+        }
+        if (latest.budget && document.getElementById('budget')) {
+            document.getElementById('budget').value = latest.budget;
+        }
+        if (latest.purpose && document.getElementById('purpose')) {
+            document.getElementById('purpose').value = latest.purpose;
+        }
+
+        if (latest.itinerary_data && typeof latest.itinerary_data === 'object') {
+            currentItineraryData = latest.itinerary_data;
+            renderItineraryMap(currentItineraryData);
+            injectReplanButtons();
+            persistOfflineItinerary('Synced from server');
+        }
+
+        currentItineraryRevision = Number(latest.revision || currentItineraryRevision || 1) || 1;
+        updateSyncIndicator('Loaded latest shared version');
+    }
+
+    function showSyncConflictBanner(conflictPayload) {
+        latestSyncConflict = conflictPayload || null;
+        if (!syncConflictBanner) {
+            return;
+        }
+
+        const revision = Number(conflictPayload?.server_revision || 0) || null;
+        syncConflictBanner.innerHTML = `
+            <div>⚠ Conflict detected: another collaborator updated this itinerary${revision ? ` (server revision ${revision})` : ''}.</div>
+            <div class="sync-conflict-actions">
+                <button type="button" class="load-server" id="loadServerVersionBtn">Load Latest Version</button>
+                <button type="button" class="retry-local" id="retryLocalSyncBtn">Retry My Changes</button>
+            </div>
+        `;
+        syncConflictBanner.style.display = 'block';
+
+        const loadServerBtn = document.getElementById('loadServerVersionBtn');
+        if (loadServerBtn) {
+            loadServerBtn.onclick = function () {
+                applyServerItineraryVersion(conflictPayload?.latest || {});
+                hideSyncConflictBanner();
+            };
+        }
+
+        const retryLocalBtn = document.getElementById('retryLocalSyncBtn');
+        if (retryLocalBtn) {
+            retryLocalBtn.onclick = function () {
+                const serverRevision = Number(conflictPayload?.server_revision || 0) || null;
+                if (serverRevision) {
+                    currentItineraryRevision = serverRevision;
+                }
+                hideSyncConflictBanner();
+                syncSavedItineraryToServer('retry-after-conflict');
+            };
+        }
+    }
+
+    async function syncSavedItineraryToServer(reason = 'manual-sync') {
+        if (!lastSavedItineraryId || !currentItineraryData) {
+            return;
+        }
+
+        const itineraryContent = document.getElementById('itinerary-content');
+        if (!itineraryContent) {
+            return;
+        }
+
+        try {
+            const response = await authJsonFetch(`/api/itineraries/${lastSavedItineraryId}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    destination: document.getElementById('destination')?.value || '',
+                    duration: document.getElementById('duration')?.value || '',
+                    budget: document.getElementById('budget')?.value || '',
+                    purpose: document.getElementById('purpose')?.value || '',
+                    preferences: selectedPreferences,
+                    itinerary_html: itineraryContent.innerHTML,
+                    itinerary_data: currentItineraryData,
+                    is_public: true,
+                    base_revision: currentItineraryRevision,
+                }),
+            });
+
+            const payload = await response.json();
+            if (response.status === 409 && payload?.code === 'revision_conflict') {
+                showSyncConflictBanner(payload);
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to sync itinerary changes');
+            }
+
+            if (payload.revision) {
+                currentItineraryRevision = Number(payload.revision) || currentItineraryRevision;
+            }
+
+            hideSyncConflictBanner();
+            updateSyncIndicator('Synced', new Date().toISOString());
+            await pushPresenceHeartbeat('editing', {
+                reason,
+                revision: currentItineraryRevision,
+            });
+        } catch (syncError) {
+            console.error('Itinerary sync failed:', syncError);
+        }
+    }
+
     // Initialize Firebase Auth State Listener
     initAuthStateListener();
 
@@ -220,11 +434,28 @@ document.addEventListener("DOMContentLoaded", function () {
     window.addEventListener('online', function () {
         showOfflineBanner(false);
         updateSyncIndicator('Back online');
+        if (lastSavedItineraryId) {
+            syncSavedItineraryToServer('back-online');
+            startPresenceHeartbeat();
+        }
     });
 
     window.addEventListener('offline', function () {
         showOfflineBanner(true);
         loadOfflineItineraryIfAvailable();
+    });
+
+    document.addEventListener('visibilitychange', function () {
+        if (lastSavedItineraryId) {
+            pushPresenceHeartbeat(document.hidden ? 'idle' : 'viewing');
+        }
+    });
+
+    window.addEventListener('beforeunload', function () {
+        if (presenceHeartbeatTimer) {
+            clearInterval(presenceHeartbeatTimer);
+            presenceHeartbeatTimer = null;
+        }
     });
 
     if (eventsCategoryFilter) {
@@ -320,10 +551,20 @@ document.addEventListener("DOMContentLoaded", function () {
                 throw new Error(data.error || 'Failed to load price hints');
             }
 
+            const isLive = String(data.source || '').startsWith('live-');
+            const quotedAt = data.quoted_at ? new Date(data.quoted_at).toLocaleString() : null;
+            const flightFrom = Number(data.flight_from || 0).toFixed(0);
+            const hotelNightly = Number(data.hotel_from_per_night || 0).toFixed(0);
+            const hotelTotal = Number(data.hotel_estimated_total || 0).toFixed(0);
+
             priceHintsBar.innerHTML = `
-                <div class="price-hint-pill">✈ Flights from ~$${Number(data.flight_from || 0).toFixed(0)} <a href="${data.flight_link}" target="_blank" rel="noopener noreferrer">Search</a></div>
-                <div class="price-hint-pill">🏨 Hotels from ~$${Number(data.hotel_from_per_night || 0).toFixed(0)}/night <a href="${data.hotel_link}" target="_blank" rel="noopener noreferrer">Browse</a></div>
-                <div class="price-hint-pill">ℹ ${data.note || 'Indicative price hints only.'}</div>
+                <div class="price-hint-pill ${isLive ? 'live' : 'fallback'}">
+                    ${isLive ? '🟢 Live' : '🟠 Estimated'} · ${String(data.currency || 'USD').toUpperCase()}
+                    ${quotedAt ? `<span class="price-quoted-at">Updated ${quotedAt}</span>` : ''}
+                </div>
+                <div class="price-hint-pill">✈ Flights from ~$${flightFrom} <a href="${data.flight_link}" target="_blank" rel="noopener noreferrer">Book</a></div>
+                <div class="price-hint-pill">🏨 Hotels from ~$${hotelNightly}/night (≈$${hotelTotal} stay) <a href="${data.hotel_link}" target="_blank" rel="noopener noreferrer">Book</a></div>
+                <div class="price-hint-pill meta">ℹ ${data.note || 'Indicative price hints only.'}</div>
             `;
             priceHintsBar.style.display = 'flex';
         } catch (error) {
@@ -418,6 +659,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
             injectReplanButtons();
             persistOfflineItinerary('Updated');
+            if (lastSavedItineraryId) {
+                await syncSavedItineraryToServer('update-from-ui');
+            }
         } catch (error) {
             console.error('Render itinerary error:', error);
         }
@@ -749,7 +993,14 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (data.itinerary_data) {
                     currentItineraryData = data.itinerary_data;
                     lastSavedItineraryId = null;
+                    currentItineraryRevision = 1;
                     latestJournal = null;
+                    hideSyncConflictBanner();
+                    renderPresenceStrip([]);
+                    if (presenceHeartbeatTimer) {
+                        clearInterval(presenceHeartbeatTimer);
+                        presenceHeartbeatTimer = null;
+                    }
                     renderItineraryMap(currentItineraryData);
                     injectReplanButtons();
                     persistOfflineItinerary('Generated');
@@ -1126,6 +1377,9 @@ document.addEventListener("DOMContentLoaded", function () {
             injectReplanButtons();
             highlightReplannedDay(payload.day_number || currentDayToReplan);
             persistOfflineItinerary('Replanned');
+            if (lastSavedItineraryId) {
+                await syncSavedItineraryToServer('day-replan');
+            }
             closeReplanModal();
         } catch (error) {
             showReplanStatus(error.message || 'Failed to re-plan day. Please try again.', true);
@@ -1706,6 +1960,15 @@ document.addEventListener("DOMContentLoaded", function () {
                     if (data.itinerary_id) {
                         lastSavedItineraryId = data.itinerary_id;
                     }
+                    if (data.revision) {
+                        currentItineraryRevision = Number(data.revision) || currentItineraryRevision;
+                    }
+                    hideSyncConflictBanner();
+                    startPresenceHeartbeat();
+                    await pushPresenceHeartbeat('editing', {
+                        reason: 'saved-link',
+                        revision: currentItineraryRevision,
+                    });
                     persistOfflineItinerary('Saved');
                     // Copy to clipboard
                     try {

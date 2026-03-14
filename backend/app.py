@@ -47,6 +47,15 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "").strip()
 ALLOW_INSECURE_UID_HEADER = os.getenv("ALLOW_INSECURE_UID_HEADER", "false").lower() in ("1", "true", "yes")
 TICKETMASTER_API_KEY = os.getenv("TICKETMASTER_API_KEY", "").strip()
+LIVE_PRICING_PROVIDER = os.getenv("LIVE_PRICING_PROVIDER", "amadeus").strip().lower()
+AMADEUS_API_KEY = os.getenv("AMADEUS_API_KEY", "").strip()
+AMADEUS_API_SECRET = os.getenv("AMADEUS_API_SECRET", "").strip()
+LIVE_PRICING_ORIGIN = os.getenv("LIVE_PRICING_ORIGIN", "NYC").strip().upper() or "NYC"
+
+_AMADEUS_TOKEN_CACHE = {
+    "token": None,
+    "expires_at": 0,
+}
 
 FIREBASE_HTTP_REQUEST = google_auth_requests.Request()
 
@@ -215,6 +224,32 @@ def _coerce_positive_int(value):
 def _normalized_email(value):
     """Normalize email-like input for case-insensitive matching."""
     return str(value or '').strip().lower()
+
+
+def _table_columns(conn, table_name):
+    """Return a set of column names for a SQLite table."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row['name']) for row in rows if row and row['name']}
+    except Exception:
+        return set()
+
+
+def _serialize_saved_itinerary_row(row):
+    """Convert a saved itinerary row to JSON-serializable dict with parsed JSON fields."""
+    payload = dict(row)
+
+    for field in ('preferences', 'itinerary_data'):
+        if field not in payload:
+            continue
+        if not isinstance(payload[field], str):
+            continue
+        try:
+            payload[field] = json.loads(payload[field])
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    return payload
 
 
 def _normalize_places(places, fallback_places=None):
@@ -944,7 +979,32 @@ def ensure_phase2_tables():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
         );
+        CREATE TABLE IF NOT EXISTS itinerary_presence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            itinerary_id INTEGER NOT NULL,
+            firebase_uid TEXT NOT NULL,
+            email TEXT,
+            status TEXT DEFAULT 'viewing',
+            cursor_context TEXT,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(itinerary_id, firebase_uid),
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
     ''')
+
+    # Lightweight migrations for sync/presence features.
+    saved_itinerary_columns = _table_columns(conn, 'saved_itineraries')
+    if 'revision' not in saved_itinerary_columns:
+        conn.execute('ALTER TABLE saved_itineraries ADD COLUMN revision INTEGER DEFAULT 1')
+    if 'last_editor_uid' not in saved_itinerary_columns:
+        conn.execute('ALTER TABLE saved_itineraries ADD COLUMN last_editor_uid TEXT')
+
+    conn.execute(
+        '''CREATE INDEX IF NOT EXISTS idx_itinerary_presence_recent
+           ON itinerary_presence (itinerary_id, last_seen)'''
+    )
+
+    conn.commit()
     conn.close()
 
 # Auto-create Phase 2 tables on startup
@@ -998,6 +1058,295 @@ def _log_itinerary_activity(conn, itinerary_id, actor_uid, action, details=None)
     )
 
 
+def _normalize_presence_cursor(value):
+    if value is None:
+        return None
+
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+
+    text = str(value).strip()
+    return text or None
+
+
+def _decode_presence_cursor(value):
+    if not value:
+        return None
+
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value
+
+
+def _prune_itinerary_presence(conn):
+    # Keep only recent heartbeat rows to avoid unbounded growth.
+    conn.execute(
+        "DELETE FROM itinerary_presence WHERE last_seen < datetime('now', '-5 minutes')"
+    )
+
+
+def _list_active_itinerary_presence(conn, itinerary_id):
+    rows = conn.execute(
+        '''SELECT firebase_uid, email, status, cursor_context, last_seen
+           FROM itinerary_presence
+           WHERE itinerary_id = ?
+             AND last_seen >= datetime('now', '-90 seconds')
+           ORDER BY last_seen DESC''',
+        (itinerary_id,)
+    ).fetchall()
+
+    active = []
+    for row in rows:
+        entry = dict(row)
+        entry['cursor_context'] = _decode_presence_cursor(entry.get('cursor_context'))
+        active.append(entry)
+    return active
+
+
+def _iso_timestamp_now():
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _build_price_deep_links(destination):
+    return {
+        "flight_link": f"https://www.aviasales.com/search?destination={quote_plus(destination)}",
+        "hotel_link": f"https://search.hotellook.com/?destination={quote_plus(destination)}",
+    }
+
+
+def _parse_price_value(value):
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if parsed > 0 else None
+
+    cleaned = str(value).strip().replace(',', '')
+    if not cleaned:
+        return None
+
+    try:
+        parsed = float(cleaned)
+        return parsed if parsed > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_amadeus_access_token():
+    """Return a cached Amadeus access token when credentials are configured."""
+    if not AMADEUS_API_KEY or not AMADEUS_API_SECRET:
+        return None
+
+    now = time.time()
+    cached_token = _AMADEUS_TOKEN_CACHE.get("token")
+    cached_expiry = _AMADEUS_TOKEN_CACHE.get("expires_at", 0)
+    if cached_token and now < cached_expiry:
+        return cached_token
+
+    try:
+        resp = requests.post(
+            "https://test.api.amadeus.com/v1/security/oauth2/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": AMADEUS_API_KEY,
+                "client_secret": AMADEUS_API_SECRET,
+            },
+            timeout=6,
+        )
+        if resp.status_code != 200:
+            logging.warning(f"Amadeus token request failed: {resp.status_code}")
+            return None
+
+        payload = resp.json()
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            return None
+
+        expires_in = _coerce_positive_int(payload.get("expires_in")) or 1500
+        # Keep a safety window so we refresh before token expiration.
+        _AMADEUS_TOKEN_CACHE["token"] = token
+        _AMADEUS_TOKEN_CACHE["expires_at"] = now + max(expires_in - 45, 60)
+        return token
+    except Exception as token_error:
+        logging.warning(f"Amadeus auth failed: {token_error}")
+        return None
+
+
+def _resolve_amadeus_city_code(destination, token):
+    """Resolve destination name to Amadeus city IATA code."""
+    try:
+        resp = requests.get(
+            "https://test.api.amadeus.com/v1/reference-data/locations",
+            params={
+                "keyword": destination,
+                "subType": "CITY",
+                "page[limit]": 1,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=6,
+        )
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        rows = payload.get("data") or []
+        if not rows:
+            return None
+
+        return str(rows[0].get("iataCode") or "").strip().upper() or None
+    except Exception as city_error:
+        logging.warning(f"Amadeus city lookup failed: {city_error}")
+        return None
+
+
+def _extract_min_flight_price(payload):
+    prices = []
+    for offer in payload.get("data") or []:
+        price = offer.get("price") if isinstance(offer, dict) else {}
+        total = _parse_price_value((price or {}).get("grandTotal"))
+        if total is None:
+            total = _parse_price_value((price or {}).get("total"))
+        if total is not None:
+            prices.append(total)
+
+    if not prices:
+        return None
+    return min(prices)
+
+
+def _extract_min_hotel_total(payload):
+    totals = []
+    for hotel in payload.get("data") or []:
+        offers = hotel.get("offers") if isinstance(hotel, dict) else []
+        for offer in offers or []:
+            price = offer.get("price") if isinstance(offer, dict) else {}
+            total = _parse_price_value((price or {}).get("total"))
+            if total is not None:
+                totals.append(total)
+
+    if not totals:
+        return None
+    return min(totals)
+
+
+def _fetch_amadeus_live_price_hints(destination, duration_days=3, currency='USD'):
+    """Fetch near-real-time flight and hotel quote hints from Amadeus APIs."""
+    token = _get_amadeus_access_token()
+    if not token:
+        return None
+
+    city_code = _resolve_amadeus_city_code(destination, token)
+    if not city_code:
+        return None
+
+    duration_days = max(1, min(duration_days, 30))
+    departure_date = (datetime.utcnow() + timedelta(days=45)).date()
+    check_in = departure_date
+    check_out = check_in + timedelta(days=duration_days)
+
+    headers = {"Authorization": f"Bearer {token}"}
+
+    min_flight = None
+    min_hotel_total = None
+
+    try:
+        flight_resp = requests.get(
+            "https://test.api.amadeus.com/v2/shopping/flight-offers",
+            params={
+                "originLocationCode": LIVE_PRICING_ORIGIN,
+                "destinationLocationCode": city_code,
+                "departureDate": departure_date.isoformat(),
+                "adults": 1,
+                "currencyCode": currency,
+                "max": 8,
+            },
+            headers=headers,
+            timeout=7,
+        )
+        if flight_resp.status_code == 200:
+            min_flight = _extract_min_flight_price(flight_resp.json())
+    except Exception as flight_error:
+        logging.warning(f"Live flight quotes failed: {flight_error}")
+
+    try:
+        hotel_list_resp = requests.get(
+            "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city",
+            params={"cityCode": city_code},
+            headers=headers,
+            timeout=7,
+        )
+        hotel_ids = []
+        if hotel_list_resp.status_code == 200:
+            for row in hotel_list_resp.json().get("data") or []:
+                hid = str(row.get("hotelId") or "").strip()
+                if hid:
+                    hotel_ids.append(hid)
+                if len(hotel_ids) >= 10:
+                    break
+
+        if hotel_ids:
+            offers_resp = requests.get(
+                "https://test.api.amadeus.com/v3/shopping/hotel-offers",
+                params={
+                    "hotelIds": ','.join(hotel_ids),
+                    "checkInDate": check_in.isoformat(),
+                    "checkOutDate": check_out.isoformat(),
+                    "adults": 1,
+                    "roomQuantity": 1,
+                    "currency": currency,
+                },
+                headers=headers,
+                timeout=7,
+            )
+            if offers_resp.status_code == 200:
+                min_hotel_total = _extract_min_hotel_total(offers_resp.json())
+    except Exception as hotel_error:
+        logging.warning(f"Live hotel quotes failed: {hotel_error}")
+
+    if min_flight is None and min_hotel_total is None:
+        return None
+
+    links = _build_price_deep_links(destination)
+    nightly = None
+    if min_hotel_total is not None:
+        nightly = min_hotel_total / max(duration_days, 1)
+
+    return {
+        "destination": destination,
+        "currency": currency,
+        "flight_from": round(min_flight, 2) if min_flight is not None else None,
+        "hotel_from_per_night": round(nightly, 2) if nightly is not None else None,
+        "hotel_estimated_total": round(min_hotel_total, 2) if min_hotel_total is not None else None,
+        "flight_link": links["flight_link"],
+        "hotel_link": links["hotel_link"],
+        "source": "live-amadeus",
+        "quoted_at": _iso_timestamp_now(),
+        "note": "Live provider-backed quote hints. Final booking prices can change at checkout.",
+    }
+
+
+def _fetch_live_provider_price_hints(destination, duration_days=3, currency='USD'):
+    if LIVE_PRICING_PROVIDER == 'amadeus':
+        return _fetch_amadeus_live_price_hints(destination, duration_days, currency)
+    return None
+
+
+def _merge_price_hints(estimate_hints, live_hints):
+    """Merge live quote payload over fallback estimation while preserving required fields."""
+    if not live_hints:
+        return estimate_hints
+
+    merged = dict(estimate_hints)
+    for key, value in live_hints.items():
+        if value is not None and value != '':
+            merged[key] = value
+
+    merged['is_live'] = bool(str(merged.get('source', '')).startswith('live-'))
+    return merged
+
+
 def _estimate_price_hints(destination, duration_days=3, currency='USD'):
     """Build practical price hint estimates and deep links for booking research."""
     seed = sum(ord(char) for char in destination.lower())
@@ -1007,16 +1356,19 @@ def _estimate_price_hints(destination, duration_days=3, currency='USD'):
     hotel_nightly = 55 + (seed % 170)
     total_hotel = hotel_nightly * duration_days
 
+    links = _build_price_deep_links(destination)
     return {
         "destination": destination,
         "currency": currency,
         "flight_from": round(flight_estimate, 2),
         "hotel_from_per_night": round(hotel_nightly, 2),
         "hotel_estimated_total": round(total_hotel, 2),
-        "flight_link": f"https://www.aviasales.com/search?destination={quote_plus(destination)}",
-        "hotel_link": f"https://search.hotellook.com/?destination={quote_plus(destination)}",
+        "flight_link": links["flight_link"],
+        "hotel_link": links["hotel_link"],
         "note": "Indicative price hints only. Final prices vary by date and availability.",
         "source": "estimation",
+        "quoted_at": _iso_timestamp_now(),
+        "is_live": False,
     }
 
 
@@ -1214,26 +1566,58 @@ def save_itinerary():
 
     try:
         conn = get_db_connection()
+        saved_columns = _table_columns(conn, 'saved_itineraries')
+
+        insert_fields = [
+            'firebase_uid',
+            'share_token',
+            'destination',
+            'duration',
+            'budget',
+            'purpose',
+            'preferences',
+            'itinerary_html',
+            'itinerary_data',
+            'is_public',
+        ]
+        insert_values = [
+            auth_user['uid'],
+            share_token,
+            destination,
+            data.get('duration', ''),
+            data.get('budget', ''),
+            data.get('purpose', ''),
+            json.dumps(data.get('preferences', [])),
+            itinerary_html,
+            json.dumps(data.get('itinerary_data', {})),
+            1 if data.get('is_public', True) else 0,
+        ]
+
+        if 'revision' in saved_columns:
+            insert_fields.append('revision')
+            insert_values.append(1)
+        if 'last_editor_uid' in saved_columns:
+            insert_fields.append('last_editor_uid')
+            insert_values.append(auth_user['uid'])
+
+        placeholders = ', '.join(['?'] * len(insert_fields))
         cursor = conn.execute(
-            '''INSERT INTO saved_itineraries
-               (firebase_uid, share_token, destination, duration, budget, purpose,
-                preferences, itinerary_html, itinerary_data, is_public)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-            (
-                auth_user['uid'],
-                share_token,
-                destination,
-                data.get('duration', ''),
-                data.get('budget', ''),
-                data.get('purpose', ''),
-                json.dumps(data.get('preferences', [])),
-                itinerary_html,
-                json.dumps(data.get('itinerary_data', {})),
-                1 if data.get('is_public', True) else 0
-            )
+            f'''INSERT INTO saved_itineraries
+                ({', '.join(insert_fields)})
+                VALUES ({placeholders})''',
+            insert_values,
         )
 
         itinerary_id = cursor.lastrowid
+        revision = 1
+        if 'revision' in saved_columns:
+            revision_row = conn.execute(
+                'SELECT revision FROM saved_itineraries WHERE id = ?',
+                (itinerary_id,)
+            ).fetchone()
+            revision = _coerce_positive_int(revision_row['revision']) if revision_row else 1
+            revision = revision or 1
+
         _log_itinerary_activity(
             conn,
             itinerary_id,
@@ -1248,6 +1632,7 @@ def save_itinerary():
         share_url = f"{request.host_url}shared/{share_token}"
         return jsonify({
             "itinerary_id": itinerary_id,
+            "revision": revision,
             "share_token": share_token,
             "share_url": share_url,
             "message": "Itinerary saved successfully!"
@@ -1320,8 +1705,21 @@ def get_my_itineraries(firebase_uid):
 
     try:
         conn = get_db_connection()
+        select_fields = [
+            'id',
+            'share_token',
+            'destination',
+            'duration',
+            'budget',
+            'purpose',
+            'is_public',
+            'created_at',
+        ]
+        if 'revision' in _table_columns(conn, 'saved_itineraries'):
+            select_fields.append('revision')
+
         itineraries = conn.execute(
-            'SELECT id, share_token, destination, duration, budget, purpose, is_public, created_at FROM saved_itineraries WHERE firebase_uid = ? ORDER BY created_at DESC',
+            f"SELECT {', '.join(select_fields)} FROM saved_itineraries WHERE firebase_uid = ? ORDER BY created_at DESC",
             (firebase_uid,)
         ).fetchall()
         conn.close()
@@ -1790,12 +2188,158 @@ def get_itinerary_collaborators(itinerary_id):
         return jsonify({"error": "Failed to load collaborators"}), 500
 
 
+@app.route('/api/itineraries/<int:itinerary_id>', methods=['GET'])
+@firebase_auth_required
+def get_saved_itinerary(itinerary_id):
+    """Return a saved itinerary payload for owner or accepted collaborators."""
+    auth_user = _get_authenticated_user(optional=False)
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have access to this itinerary."}), 403
+
+        payload = _serialize_saved_itinerary_row(itinerary)
+        if 'revision' not in payload:
+            payload['revision'] = 1
+        payload['is_owner'] = is_owner
+        conn.close()
+        return jsonify(payload)
+    except Exception as e:
+        logging.error(f"Error loading saved itinerary {itinerary_id}: {e}")
+        return jsonify({"error": "Failed to load itinerary"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/presence', methods=['GET'])
+@firebase_auth_required
+def get_itinerary_presence(itinerary_id):
+    """List active collaborators currently viewing/editing an itinerary."""
+    auth_user = _get_authenticated_user(optional=False)
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have access to this itinerary."}), 403
+
+        conn.execute(
+            '''CREATE TABLE IF NOT EXISTS itinerary_presence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                itinerary_id INTEGER NOT NULL,
+                firebase_uid TEXT NOT NULL,
+                email TEXT,
+                status TEXT DEFAULT 'viewing',
+                cursor_context TEXT,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(itinerary_id, firebase_uid)
+            )'''
+        )
+
+        _prune_itinerary_presence(conn)
+        active = _list_active_itinerary_presence(conn, itinerary_id)
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "itinerary_id": itinerary_id,
+            "active": active,
+            "server_time": _iso_timestamp_now(),
+        })
+    except Exception as e:
+        logging.error(f"Error loading itinerary presence: {e}")
+        return jsonify({"error": "Failed to load presence"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/presence', methods=['POST'])
+@firebase_auth_required
+def heartbeat_itinerary_presence(itinerary_id):
+    """Upsert active presence heartbeat for owner/collaborator sessions."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    raw_status = str(data.get('status') or 'viewing').strip().lower()
+    status = raw_status if raw_status in {'viewing', 'editing', 'idle'} else 'viewing'
+    cursor_context = _normalize_presence_cursor(data.get('cursor_context'))
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have access to this itinerary."}), 403
+
+        conn.execute(
+            '''CREATE TABLE IF NOT EXISTS itinerary_presence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                itinerary_id INTEGER NOT NULL,
+                firebase_uid TEXT NOT NULL,
+                email TEXT,
+                status TEXT DEFAULT 'viewing',
+                cursor_context TEXT,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(itinerary_id, firebase_uid)
+            )'''
+        )
+
+        conn.execute(
+            '''INSERT INTO itinerary_presence
+               (itinerary_id, firebase_uid, email, status, cursor_context, last_seen)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(itinerary_id, firebase_uid) DO UPDATE SET
+                   email = excluded.email,
+                   status = excluded.status,
+                   cursor_context = excluded.cursor_context,
+                   last_seen = CURRENT_TIMESTAMP''',
+            (
+                itinerary_id,
+                str(auth_user.get('uid') or '').strip(),
+                _normalized_email(auth_user.get('email')),
+                status,
+                cursor_context,
+            )
+        )
+
+        _prune_itinerary_presence(conn)
+        active = _list_active_itinerary_presence(conn, itinerary_id)
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "message": "Presence heartbeat updated.",
+            "itinerary_id": itinerary_id,
+            "active": active,
+            "server_time": _iso_timestamp_now(),
+        })
+    except Exception as e:
+        logging.error(f"Error updating itinerary presence: {e}")
+        return jsonify({"error": "Failed to update presence"}), 500
+
+
 @app.route('/api/itineraries/<int:itinerary_id>', methods=['PUT'])
 @firebase_auth_required
 def update_saved_itinerary(itinerary_id):
     """Update a saved itinerary by owner or accepted collaborator."""
     auth_user = _get_authenticated_user(optional=False)
     data = request.json or {}
+    base_revision = _coerce_positive_int(data.get('base_revision'))
 
     allowed_fields = {
         'destination',
@@ -1847,22 +2391,67 @@ def update_saved_itinerary(itinerary_id):
             conn.close()
             return jsonify({"error": "Forbidden: you do not have edit access."}), 403
 
+        saved_columns = _table_columns(conn, 'saved_itineraries')
+        has_revision = 'revision' in saved_columns
+        current_revision = None
+        if has_revision:
+            current_revision = _coerce_positive_int(dict(itinerary).get('revision')) or 1
+            if base_revision and base_revision != current_revision:
+                latest_row = conn.execute(
+                    'SELECT * FROM saved_itineraries WHERE id = ?',
+                    (itinerary_id,)
+                ).fetchone()
+                latest_payload = _serialize_saved_itinerary_row(latest_row) if latest_row else None
+                conn.close()
+                return jsonify({
+                    "error": "Conflict: itinerary has newer updates from another collaborator.",
+                    "code": "revision_conflict",
+                    "server_revision": current_revision,
+                    "latest": latest_payload,
+                }), 409
+
         fields = list(updates.keys())
-        set_clause = ', '.join([f"{field} = ?" for field in fields]) + ', updated_at = CURRENT_TIMESTAMP'
-        values = [updates[field] for field in fields] + [itinerary_id]
+        set_parts = [f"{field} = ?" for field in fields]
+        values = [updates[field] for field in fields]
+
+        if has_revision:
+            set_parts.append('revision = COALESCE(revision, 1) + 1')
+        if 'last_editor_uid' in saved_columns:
+            set_parts.append('last_editor_uid = ?')
+            values.append(str(auth_user.get('uid') or '').strip())
+
+        set_parts.append('updated_at = CURRENT_TIMESTAMP')
+        set_clause = ', '.join(set_parts)
+        values.append(itinerary_id)
 
         conn.execute(f'UPDATE saved_itineraries SET {set_clause} WHERE id = ?', values)
+
+        response_revision = current_revision
+        if has_revision:
+            rev_row = conn.execute(
+                'SELECT revision FROM saved_itineraries WHERE id = ?',
+                (itinerary_id,)
+            ).fetchone()
+            response_revision = _coerce_positive_int(rev_row['revision']) if rev_row else current_revision
+
         _log_itinerary_activity(
             conn,
             itinerary_id,
             auth_user['uid'],
             'update_itinerary',
-            {'updated_fields': fields}
+            {
+                'updated_fields': fields,
+                'base_revision': base_revision,
+                'new_revision': response_revision,
+            }
         )
         conn.commit()
         conn.close()
 
-        return jsonify({"message": "Itinerary updated successfully."})
+        payload = {"message": "Itinerary updated successfully."}
+        if response_revision:
+            payload['revision'] = response_revision
+        return jsonify(payload)
     except Exception as e:
         logging.error(f"Error updating itinerary: {e}")
         return jsonify({"error": "Failed to update itinerary"}), 500
@@ -2756,7 +3345,7 @@ def generate_trip_journal():
 
 @app.route('/api/travel-price-hints', methods=['GET'])
 def travel_price_hints():
-    """Return practical indicative flight/hotel price hints for a destination."""
+    """Return live provider-backed price hints with reliable fallback estimation."""
     destination = str(request.args.get('destination', '')).strip()
     duration_raw = request.args.get('duration', '3')
     currency = str(request.args.get('currency', 'USD')).strip().upper() or 'USD'
@@ -2765,7 +3354,9 @@ def travel_price_hints():
         return jsonify({"error": "destination is required"}), 400
 
     duration_days = _coerce_positive_int(duration_raw) or 3
-    hints = _estimate_price_hints(destination, duration_days, currency)
+    estimate_hints = _estimate_price_hints(destination, duration_days, currency)
+    live_hints = _fetch_live_provider_price_hints(destination, duration_days, currency)
+    hints = _merge_price_hints(estimate_hints, live_hints)
     return jsonify(hints)
 
 

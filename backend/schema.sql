@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS saved_itineraries (
     preferences TEXT, -- JSON string
     itinerary_html TEXT NOT NULL,
     itinerary_data TEXT, -- JSON structured data
+    revision INTEGER DEFAULT 1,
+    last_editor_uid TEXT,
     is_public INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -153,6 +155,19 @@ CREATE TABLE IF NOT EXISTS itinerary_activity_log (
     action TEXT NOT NULL,
     details TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
+-- Real-time collaborator presence heartbeat
+CREATE TABLE IF NOT EXISTS itinerary_presence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    itinerary_id INTEGER NOT NULL,
+    firebase_uid TEXT NOT NULL,
+    email TEXT,
+    status TEXT DEFAULT 'viewing',
+    cursor_context TEXT,
+    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(itinerary_id, firebase_uid),
     FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
 );
 

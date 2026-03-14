@@ -173,6 +173,12 @@ python run_localhost.py
    GEMINI_API_KEY=your_gemini_api_key_here
    WEATHER_API_KEY=your_openweather_api_key_here
    FLASK_SECRET_KEY=your_secret_key_here
+   # Optional integrations
+   TICKETMASTER_API_KEY=your_ticketmaster_api_key_here
+   LIVE_PRICING_PROVIDER=amadeus
+   AMADEUS_API_KEY=your_amadeus_client_id_here
+   AMADEUS_API_SECRET=your_amadeus_client_secret_here
+   LIVE_PRICING_ORIGIN=NYC
    ```
 
 5. **Initialize Database**

@@ -1575,6 +1575,52 @@ h2 {
     text-align: right;
 }
 
+.presence-strip {
+    margin: 0 0 12px 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid #d8ecff;
+    background: #f5faff;
+    color: #2f4f6f;
+    font-size: 0.84rem;
+}
+
+.sync-conflict-banner {
+    margin: 0 0 12px 0;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid #f7c2c2;
+    background: #fff4f4;
+    color: #8a2b2b;
+    font-size: 0.86rem;
+}
+
+.sync-conflict-actions {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.sync-conflict-actions button {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.sync-conflict-actions .load-server {
+    background: #2d7ff9;
+    color: white;
+}
+
+.sync-conflict-actions .retry-local {
+    background: #f7e7b6;
+    color: #6b4d00;
+}
+
 .price-hints-bar {
     margin-bottom: 18px;
     display: flex;
@@ -1592,6 +1638,27 @@ h2 {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+}
+
+.price-hint-pill.live {
+    border-color: #9adbb4;
+    background: #f3fff8;
+    color: #1f6b3a;
+}
+
+.price-hint-pill.fallback {
+    border-color: #ffd8a3;
+    background: #fff8ef;
+    color: #8c5a12;
+}
+
+.price-hint-pill.meta {
+    border-style: dashed;
+}
+
+.price-quoted-at {
+    font-size: 0.77rem;
+    color: #6e7a8a;
 }
 
 .price-hint-pill a {

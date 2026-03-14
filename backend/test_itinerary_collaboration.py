@@ -33,6 +33,8 @@ def _create_tables(db_path):
             preferences TEXT,
             itinerary_html TEXT NOT NULL,
             itinerary_data TEXT,
+            revision INTEGER DEFAULT 1,
+            last_editor_uid TEXT,
             is_public INTEGER DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -55,6 +57,16 @@ def _create_tables(db_path):
             action TEXT NOT NULL,
             details TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS itinerary_presence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            itinerary_id INTEGER NOT NULL,
+            firebase_uid TEXT NOT NULL,
+            email TEXT,
+            status TEXT DEFAULT 'viewing',
+            cursor_context TEXT,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(itinerary_id, firebase_uid)
         );
         '''
     )
@@ -309,3 +321,61 @@ def test_owner_can_remove_pending_or_accepted_collaborator(client_with_auth):
     conn.close()
 
     assert rows_left == 0
+
+
+def test_update_itinerary_conflict_returns_409(client_with_auth):
+    client, _auth = client_with_auth
+
+    response = client.put(
+        "/api/itineraries/1",
+        json={
+            "budget": "$1999",
+            "base_revision": 9,
+        },
+    )
+
+    assert response.status_code == 409
+    body = response.get_json()
+    assert body["code"] == "revision_conflict"
+    assert body["server_revision"] >= 1
+    assert isinstance(body.get("latest"), dict)
+
+
+def test_presence_heartbeat_lists_active_collaborators(client_with_auth):
+    client, auth = client_with_auth
+
+    owner_presence = client.post(
+        "/api/itineraries/1/presence",
+        json={"status": "editing", "cursor_context": {"day": 1}},
+    )
+    assert owner_presence.status_code == 200
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"collaborator_uid": "user-2"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-2"
+    auth["email"] = "user2@example.com"
+    collab_presence = client.post(
+        "/api/itineraries/1/presence",
+        json={"status": "viewing"},
+    )
+    assert collab_presence.status_code == 200
+
+    list_presence = client.get("/api/itineraries/1/presence")
+    assert list_presence.status_code == 200
+    active = list_presence.get_json()["active"]
+    active_uids = {row["firebase_uid"] for row in active}
+    assert "user-1" in active_uids or "user-2" in active_uids
+
+
+def test_outsider_cannot_read_presence(client_with_auth):
+    client, auth = client_with_auth
+
+    auth["uid"] = "user-9"
+    auth["email"] = "notallowed@example.com"
+
+    response = client.get("/api/itineraries/1/presence")
+    assert response.status_code == 403

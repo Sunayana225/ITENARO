@@ -68,6 +68,36 @@ def test_travel_price_hints_success(client):
     assert body["destination"] == "Paris"
     assert body["flight_from"] > 0
     assert body["hotel_from_per_night"] > 0
+    assert "source" in body
+    assert "quoted_at" in body
+
+
+def test_travel_price_hints_live_provider_path(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_live_provider_price_hints",
+        lambda *_args, **_kwargs: {
+            "destination": "Paris",
+            "currency": "USD",
+            "flight_from": 488.0,
+            "hotel_from_per_night": 142.5,
+            "hotel_estimated_total": 712.5,
+            "flight_link": "https://example.com/flights",
+            "hotel_link": "https://example.com/hotels",
+            "source": "live-amadeus",
+            "quoted_at": "2026-03-15T00:00:00Z",
+            "note": "Live quote",
+        },
+    )
+
+    response = client.get("/api/travel-price-hints?destination=Paris&duration=5")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["source"] == "live-amadeus"
+    assert body["is_live"] is True
+    assert body["flight_from"] == 488.0
+    assert body["hotel_from_per_night"] == 142.5
 
 
 def test_events_feed_fallback_path(client, monkeypatch):
