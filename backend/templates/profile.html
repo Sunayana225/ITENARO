@@ -1009,6 +1009,38 @@
         let userWishlist = [];
         let availableDestinations = [];
 
+        async function getAuthHeaders(includeJsonContentType = false) {
+            const headers = {};
+            if (includeJsonContentType) {
+                headers['Content-Type'] = 'application/json';
+            }
+
+            if (!currentUser) {
+                return headers;
+            }
+
+            try {
+                const token = await currentUser.getIdToken();
+                headers.Authorization = `Bearer ${token}`;
+            } catch (error) {
+                console.error('Failed to fetch auth token:', error);
+            }
+
+            return headers;
+        }
+
+        async function authFetch(url, options = {}) {
+            const needsJson = options.body !== undefined;
+            const authHeaders = await getAuthHeaders(needsJson);
+            return fetch(url, {
+                ...options,
+                headers: {
+                    ...authHeaders,
+                    ...(options.headers || {})
+                }
+            });
+        }
+
         // Modal management functions
         window.openModal = function(modalId) {
             document.getElementById(modalId).style.display = 'block';
@@ -1108,7 +1140,7 @@
 
         async function loadUserProfile(uid) {
             try {
-                const response = await fetch(`/api/profile/${uid}`);
+                const response = await authFetch(`/api/profile/${uid}`);
                 if (response.ok) {
                     userProfile = await response.json();
                     populateProfileForm();
@@ -1123,9 +1155,8 @@
 
         async function createUserProfile(uid) {
             try {
-                const response = await fetch('/api/profile', {
+                const response = await authFetch('/api/profile', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         firebase_uid: uid,
                         email: currentUser.email,
@@ -1190,9 +1221,8 @@
                     };
 
                     try {
-                        const response = await fetch(`/api/profile/${currentUser.uid}`, {
+                        const response = await authFetch(`/api/profile/${currentUser.uid}`, {
                             method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(profileData)
                         });
 
@@ -1279,7 +1309,7 @@
             if (!currentUser) return;
 
             try {
-                const response = await fetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
+                const response = await authFetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
                     method: 'DELETE'
                 });
 
@@ -1300,7 +1330,7 @@
             if (!currentUser) return;
 
             try {
-                const response = await fetch(`/api/wishlist/${currentUser.uid}`);
+                const response = await authFetch(`/api/wishlist/${currentUser.uid}`);
                 if (response.ok) {
                     userWishlist = await response.json();
                     displayWishlist();
@@ -1418,9 +1448,8 @@
             if (!currentUser) return;
 
             try {
-                const response = await fetch('/api/wishlist', {
+                const response = await authFetch('/api/wishlist', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         user_uid: currentUser.uid,
                         destination_id: destinationId,
@@ -1445,9 +1474,8 @@
             if (!currentUser) return;
 
             try {
-                const response = await fetch('/api/wishlist', {
+                const response = await authFetch('/api/wishlist', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         user_uid: currentUser.uid,
                         destination_id: destinationId,
@@ -1472,7 +1500,7 @@
             if (!currentUser) return;
 
             try {
-                const response = await fetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
+                const response = await authFetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
                     method: 'DELETE'
                 });
 
@@ -1538,7 +1566,7 @@
         async function loadPassport() {
             if (!currentUser) return;
             try {
-                const resp = await fetch(`/api/passport/${currentUser.uid}`);
+                const resp = await authFetch(`/api/passport/${currentUser.uid}`);
                 const data = await resp.json();
 
                 // Update level display
@@ -1611,9 +1639,8 @@
                 }
 
                 try {
-                    const resp = await fetch('/api/passport/stamp', {
+                    const resp = await authFetch('/api/passport/stamp', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             firebase_uid: currentUser.uid,
                             country: document.getElementById('stampCountry').value,
@@ -1646,7 +1673,7 @@
         async function loadSavedItineraries() {
             if (!currentUser) return;
             try {
-                const resp = await fetch(`/api/my-itineraries/${currentUser.uid}`);
+                const resp = await authFetch(`/api/my-itineraries/${currentUser.uid}`);
                 const itineraries = await resp.json();
                 renderSavedItineraries(itineraries);
             } catch (err) {

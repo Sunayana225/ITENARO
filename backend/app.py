@@ -7,12 +7,15 @@ import random
 import string
 import sqlite3
 import time
+from functools import wraps
 from datetime import datetime, timedelta  # Import datetime for blog post timestamps
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, g
 import google.generativeai as genai
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 from prompts import (
     generate_itinerary_prompt,
     format_itinerary_response,
@@ -39,6 +42,10 @@ logging.basicConfig(level=logging.INFO)
 # Load API keys from environment variables (REQUIRED - no fallbacks for security)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "").strip()
+ALLOW_INSECURE_UID_HEADER = os.getenv("ALLOW_INSECURE_UID_HEADER", "false").lower() in ("1", "true", "yes")
+
+FIREBASE_HTTP_REQUEST = google_auth_requests.Request()
 
 # Validate that API keys are set
 if not GEMINI_API_KEY:
@@ -98,6 +105,99 @@ def record_api_call():
     """Record an API call for rate limiting."""
     global API_CALL_HISTORY
     API_CALL_HISTORY.append(datetime.now())
+
+
+def _extract_bearer_token():
+    """Extract Firebase Bearer token from Authorization header."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header:
+        return None
+
+    parts = auth_header.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+
+    return parts[1].strip()
+
+
+def _verify_firebase_token(token):
+    """Verify Firebase ID token and return claims dict or None."""
+    try:
+        audience = FIREBASE_PROJECT_ID or None
+        claims = google_id_token.verify_firebase_token(
+            token,
+            FIREBASE_HTTP_REQUEST,
+            audience=audience,
+        )
+        if not isinstance(claims, dict):
+            return None
+
+        if FIREBASE_PROJECT_ID and claims.get("aud") != FIREBASE_PROJECT_ID:
+            logging.warning("Firebase token rejected due to audience mismatch.")
+            return None
+
+        return claims
+    except Exception as verify_error:
+        logging.warning(f"Firebase token verification failed: {verify_error}")
+        return None
+
+
+def _get_authenticated_user(optional=False):
+    """Get authenticated Firebase user from token and cache it for the request."""
+    if getattr(g, "auth_user", None):
+        return g.auth_user
+
+    token = _extract_bearer_token()
+    if token:
+        claims = _verify_firebase_token(token)
+        if claims and claims.get("uid"):
+            g.auth_user = {
+                "uid": claims.get("uid"),
+                "email": claims.get("email"),
+                "claims": claims,
+                "provider": "firebase-token",
+            }
+            return g.auth_user
+
+    if ALLOW_INSECURE_UID_HEADER:
+        insecure_uid = (request.headers.get("X-Firebase-UID") or request.args.get("uid") or "").strip()
+        if insecure_uid:
+            g.auth_user = {
+                "uid": insecure_uid,
+                "email": None,
+                "claims": {},
+                "provider": "insecure-header",
+            }
+            return g.auth_user
+
+    if optional:
+        return None
+    return None
+
+
+def _auth_error(message="Authentication required.", status_code=401):
+    return jsonify({"error": message}), status_code
+
+
+def _enforce_uid_ownership(target_uid):
+    auth_user = _get_authenticated_user(optional=False)
+    if not auth_user:
+        return _auth_error()
+
+    if str(auth_user.get("uid")) != str(target_uid):
+        return _auth_error("Forbidden: resource ownership mismatch.", 403)
+
+    return None
+
+
+def firebase_auth_required(view_func):
+    """Decorator for endpoints that require a verified Firebase user."""
+    @wraps(view_func)
+    def _wrapped(*args, **kwargs):
+        if not _get_authenticated_user(optional=False):
+            return _auth_error()
+        return view_func(*args, **kwargs)
+    return _wrapped
 
 
 def _coerce_positive_int(value):
@@ -268,28 +368,27 @@ def localhost_test():
 
 @app.route('/api/auth-check', methods=['GET'])
 def auth_check():
-    """Return lightweight auth status used by frontend compatibility checks."""
-    firebase_uid = request.headers.get('X-Firebase-UID') or request.args.get('uid')
-    if firebase_uid:
+    """Return auth status based on verified Firebase token."""
+    auth_user = _get_authenticated_user(optional=True)
+    if auth_user:
         return jsonify({
             'authenticated': True,
-            'uid': firebase_uid,
-            'provider': 'firebase-client'
-        })
-
-    if 'user' in session:
-        return jsonify({
-            'authenticated': True,
-            'uid': session['user'],
-            'provider': 'flask-session'
+            'uid': auth_user.get('uid'),
+            'email': auth_user.get('email'),
+            'provider': auth_user.get('provider', 'firebase-token')
         })
 
     return jsonify({'authenticated': False}), 401
 
 # Profile and Wishlist API Routes
 @app.route('/api/profile/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
 def get_profile(firebase_uid):
     """Get user profile by Firebase UID."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         conn = get_db_connection()
         profile = conn.execute(
@@ -307,16 +406,33 @@ def get_profile(firebase_uid):
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/profile', methods=['POST'])
+@firebase_auth_required
 def create_profile():
     """Create a new user profile."""
     try:
-        data = request.json
+        data = request.json or {}
+        auth_user = _get_authenticated_user(optional=False)
+        firebase_uid = auth_user['uid']
+        email = auth_user.get('email') or data.get('email', '')
+
+        if data.get('firebase_uid') and data.get('firebase_uid') != firebase_uid:
+            return jsonify({'error': 'Forbidden: resource ownership mismatch.'}), 403
+
         conn = get_db_connection()
+
+        existing = conn.execute(
+            'SELECT * FROM user_profiles WHERE firebase_uid = ?',
+            (firebase_uid,)
+        ).fetchone()
+
+        if existing:
+            conn.close()
+            return jsonify(dict(existing)), 200
 
         cursor = conn.execute(
             '''INSERT INTO user_profiles (firebase_uid, email, display_name, bio, travel_preferences)
                VALUES (?, ?, ?, ?, ?)''',
-            (data.get('firebase_uid'), data.get('email'), data.get('display_name', ''),
+            (firebase_uid, email, data.get('display_name', ''),
              data.get('bio', ''), data.get('travel_preferences', '{}'))
         )
 
@@ -336,8 +452,13 @@ def create_profile():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/profile/<firebase_uid>', methods=['PUT'])
+@firebase_auth_required
 def update_profile(firebase_uid):
     """Update user profile."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         data = request.json
         conn = get_db_connection()
@@ -377,8 +498,13 @@ def get_destinations():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/wishlist/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
 def get_wishlist(firebase_uid):
     """Get user's wishlist."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         conn = get_db_connection()
 
@@ -409,16 +535,23 @@ def get_wishlist(firebase_uid):
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/wishlist', methods=['POST'])
+@firebase_auth_required
 def add_to_wishlist():
     """Add destination to user's wishlist."""
     try:
-        data = request.json
+        data = request.json or {}
+        auth_user = _get_authenticated_user(optional=False)
+        user_uid = auth_user['uid']
+
+        if data.get('user_uid') and data.get('user_uid') != user_uid:
+            return jsonify({'error': 'Forbidden: resource ownership mismatch.'}), 403
+
         conn = get_db_connection()
 
         # Get user profile
         user = conn.execute(
             'SELECT id FROM user_profiles WHERE firebase_uid = ?',
-            (data.get('user_uid'),)
+            (user_uid,)
         ).fetchone()
 
         if not user:
@@ -440,8 +573,13 @@ def add_to_wishlist():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/wishlist/<firebase_uid>/<int:destination_id>', methods=['DELETE'])
+@firebase_auth_required
 def remove_from_wishlist(firebase_uid, destination_id):
     """Remove destination from user's wishlist."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         conn = get_db_connection()
 
@@ -778,10 +916,18 @@ def generate_share_token():
 
 
 @app.route('/api/save-itinerary', methods=['POST'])
+@firebase_auth_required
 def save_itinerary():
     """Save an itinerary and generate a shareable link."""
-    data = request.json
+    data = request.json or {}
+    auth_user = _get_authenticated_user(optional=False)
     share_token = generate_share_token()
+
+    destination = str(data.get('destination', '')).strip()
+    itinerary_html = str(data.get('itinerary_html', '')).strip()
+
+    if not destination or not itinerary_html:
+        return jsonify({"error": "destination and itinerary_html are required"}), 400
 
     try:
         conn = get_db_connection()
@@ -791,14 +937,14 @@ def save_itinerary():
                 preferences, itinerary_html, itinerary_data, is_public)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (
-                data.get('firebase_uid', ''),
+                auth_user['uid'],
                 share_token,
-                data.get('destination', ''),
+                destination,
                 data.get('duration', ''),
                 data.get('budget', ''),
                 data.get('purpose', ''),
                 json.dumps(data.get('preferences', [])),
-                data.get('itinerary_html', ''),
+                itinerary_html,
                 json.dumps(data.get('itinerary_data', {})),
                 1 if data.get('is_public', True) else 0
             )
@@ -871,8 +1017,13 @@ def get_shared_itinerary_data(share_token):
 
 
 @app.route('/api/my-itineraries/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
 def get_my_itineraries(firebase_uid):
     """Get all saved itineraries for a user."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         conn = get_db_connection()
         itineraries = conn.execute(
@@ -889,8 +1040,13 @@ def get_my_itineraries(firebase_uid):
 # ==================== PHASE 2 - BUDGET TRACKER ====================
 
 @app.route('/api/expenses/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
 def get_expenses(firebase_uid):
     """Get all expenses for a user, optionally filtered by itinerary."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     itinerary_id = request.args.get('itinerary_id')
     try:
         conn = get_db_connection()
@@ -924,21 +1080,47 @@ def get_expenses(firebase_uid):
 
 
 @app.route('/api/expenses', methods=['POST'])
+@firebase_auth_required
 def add_expense():
     """Add a new expense."""
-    data = request.json
+    data = request.json or {}
+    auth_user = _get_authenticated_user(optional=False)
+
+    description = str(data.get('description', '')).strip()
+    category = str(data.get('category', 'other')).strip() or 'other'
+    currency = str(data.get('currency', 'USD')).strip() or 'USD'
+
+    try:
+        amount = float(data.get('amount', 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount must be a valid number"}), 400
+
+    if amount <= 0 or not description:
+        return jsonify({"error": "description and a positive amount are required"}), 400
+
     try:
         conn = get_db_connection()
+
+        itinerary_id = data.get('itinerary_id')
+        if itinerary_id:
+            itinerary = conn.execute(
+                'SELECT id FROM saved_itineraries WHERE id = ? AND firebase_uid = ?',
+                (itinerary_id, auth_user['uid'])
+            ).fetchone()
+            if not itinerary:
+                conn.close()
+                return jsonify({'error': 'Forbidden: itinerary ownership mismatch.'}), 403
+
         conn.execute(
             '''INSERT INTO trip_expenses (firebase_uid, itinerary_id, category, description, amount, currency, date)
                VALUES (?, ?, ?, ?, ?, ?, ?)''',
             (
-                data.get('firebase_uid', ''),
-                data.get('itinerary_id'),
-                data.get('category', 'other'),
-                data.get('description', ''),
-                float(data.get('amount', 0)),
-                data.get('currency', 'USD'),
+                auth_user['uid'],
+                itinerary_id,
+                category,
+                description,
+                amount,
+                currency,
                 data.get('date', datetime.now().strftime('%Y-%m-%d'))
             )
         )
@@ -951,11 +1133,26 @@ def add_expense():
 
 
 @app.route('/api/expenses/<int:expense_id>', methods=['DELETE'])
+@firebase_auth_required
 def delete_expense(expense_id):
     """Delete an expense."""
+    auth_user = _get_authenticated_user(optional=False)
     try:
         conn = get_db_connection()
-        conn.execute('DELETE FROM trip_expenses WHERE id = ?', (expense_id,))
+
+        row = conn.execute(
+            'SELECT id FROM trip_expenses WHERE id = ? AND firebase_uid = ?',
+            (expense_id, auth_user['uid'])
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({'error': 'Expense not found or not owned by user.'}), 404
+
+        conn.execute(
+            'DELETE FROM trip_expenses WHERE id = ? AND firebase_uid = ?',
+            (expense_id, auth_user['uid'])
+        )
         conn.commit()
         conn.close()
         return jsonify({"message": "Expense deleted"})
@@ -1010,8 +1207,13 @@ def get_exchange_rates():
 # ==================== PHASE 2 - DIGITAL PASSPORT ====================
 
 @app.route('/api/passport/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
 def get_passport(firebase_uid):
     """Get digital passport data for a user."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
     try:
         conn = get_db_connection()
         stamps = conn.execute(
@@ -1035,9 +1237,19 @@ def get_passport(firebase_uid):
 
 
 @app.route('/api/passport/stamp', methods=['POST'])
+@firebase_auth_required
 def add_stamp():
     """Add a country stamp to the digital passport."""
-    data = request.json
+    data = request.json or {}
+    auth_user = _get_authenticated_user(optional=False)
+
+    country = str(data.get('country', '')).strip()
+    if not country:
+        return jsonify({'error': 'country is required'}), 400
+
+    if data.get('firebase_uid') and data.get('firebase_uid') != auth_user['uid']:
+        return jsonify({'error': 'Forbidden: resource ownership mismatch.'}), 403
+
     try:
         conn = get_db_connection()
         conn.execute(
@@ -1045,8 +1257,8 @@ def add_stamp():
                (firebase_uid, country, country_code, visited_date, trip_notes, stamp_type)
                VALUES (?, ?, ?, ?, ?, ?)''',
             (
-                data.get('firebase_uid', ''),
-                data.get('country', ''),
+                auth_user['uid'],
+                country,
                 data.get('country_code', ''),
                 data.get('visited_date', datetime.now().strftime('%Y-%m-%d')),
                 data.get('trip_notes', ''),

@@ -12,10 +12,42 @@ document.addEventListener("DOMContentLoaded", function () {
     // Load destinations from API
     loadDestinations();
 
+    async function getAuthHeaders(includeJsonContentType = false) {
+        const headers = {};
+        if (includeJsonContentType) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        if (!currentUser) {
+            return headers;
+        }
+
+        try {
+            const token = await currentUser.getIdToken();
+            headers.Authorization = `Bearer ${token}`;
+        } catch (error) {
+            console.error('Failed to fetch auth token:', error);
+        }
+
+        return headers;
+    }
+
+    async function authFetch(url, options = {}) {
+        const needsJson = options.body !== undefined;
+        const authHeaders = await getAuthHeaders(needsJson);
+        return fetch(url, {
+            ...options,
+            headers: {
+                ...authHeaders,
+                ...(options.headers || {})
+            }
+        });
+    }
+
     function initAuthStateListener() {
         onAuthStateChange(async (user) => {
             if (user) {
-                currentUser = { uid: user.uid, email: user.email };
+                currentUser = user;
                 await loadUserWishlist();
             } else {
                 currentUser = null;
@@ -46,7 +78,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!currentUser) return;
 
         try {
-            const response = await fetch(`/api/wishlist/${currentUser.uid}`);
+            const response = await authFetch(`/api/wishlist/${currentUser.uid}`);
             if (response.ok) {
                 userWishlist = await response.json();
                 if (allDestinations.length > 0) {
@@ -237,7 +269,7 @@ document.addEventListener("DOMContentLoaded", function () {
         try {
             if (isInWishlist) {
                 // Remove from wishlist
-                const response = await fetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
+                const response = await authFetch(`/api/wishlist/${currentUser.uid}/${destinationId}`, {
                     method: 'DELETE'
                 });
 
@@ -250,9 +282,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
             } else {
                 // Add to wishlist
-                const response = await fetch('/api/wishlist', {
+                const response = await authFetch('/api/wishlist', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         user_uid: currentUser.uid,
                         destination_id: destinationId,

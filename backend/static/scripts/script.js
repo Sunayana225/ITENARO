@@ -32,6 +32,45 @@ document.addEventListener("DOMContentLoaded", function () {
     const replanCancelBtn = document.getElementById("replanCancelBtn");
     const replanSubmitBtn = document.getElementById("replanSubmitBtn");
 
+    async function getAuthHeaders(includeJsonContentType = false) {
+        const user = getCurrentUser();
+        const headers = {};
+
+        if (includeJsonContentType) {
+            headers["Content-Type"] = "application/json";
+        }
+
+        if (!user) {
+            return headers;
+        }
+
+        try {
+            const token = await user.getIdToken();
+            headers.Authorization = `Bearer ${token}`;
+            return headers;
+        } catch (authError) {
+            console.error("Failed to get Firebase token:", authError);
+            return headers;
+        }
+    }
+
+    async function authJsonFetch(url, options = {}) {
+        const needsJson = options.body !== undefined || options.forceJsonHeader;
+        const authHeaders = await getAuthHeaders(needsJson);
+        const mergedHeaders = {
+            ...authHeaders,
+            ...(options.headers || {})
+        };
+
+        const requestOptions = {
+            ...options,
+            headers: mergedHeaders,
+        };
+
+        delete requestOptions.forceJsonHeader;
+        return fetch(url, requestOptions);
+    }
+
     // Initialize Firebase Auth State Listener
     initAuthStateListener();
 
@@ -865,15 +904,19 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
             }
 
+            const user = getCurrentUser();
+            if (!user) {
+                alert("Please log in to save and share your itinerary.");
+                return;
+            }
+
             saveLinkBtn.innerHTML = '<span class="export-icon">⏳</span> Saving...';
             saveLinkBtn.disabled = true;
 
             try {
-                const response = await fetch("/api/save-itinerary", {
+                const response = await authJsonFetch("/api/save-itinerary", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        firebase_uid: window.currentUserUid || '',
                         destination: document.getElementById("destination")?.value || '',
                         duration: document.getElementById("duration")?.value || '',
                         budget: document.getElementById("budget")?.value || '',
@@ -992,27 +1035,30 @@ document.addEventListener("DOMContentLoaded", function () {
     const budgetPanel = document.getElementById("budgetPanel");
     let budgetChart = null;
 
-    // Get budget storage key
-    function getBudgetStorageKey() {
-        const dest = document.getElementById("destination")?.value || 'trip';
-        return `budget_${dest}`;
-    }
+    async function fetchExpensesFromApi() {
+        const user = getCurrentUser();
+        if (!user) {
+            return { expenses: [], total: 0, by_category: {} };
+        }
 
-    function getExpensesFromStorage() {
-        const key = getBudgetStorageKey();
-        return JSON.parse(localStorage.getItem(key) || '[]');
-    }
+        const response = await authJsonFetch(`/api/expenses/${encodeURIComponent(user.uid)}`, {
+            method: 'GET',
+            forceJsonHeader: false,
+        });
 
-    function saveExpensesToStorage(expenses) {
-        const key = getBudgetStorageKey();
-        localStorage.setItem(key, JSON.stringify(expenses));
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to load expenses');
+        }
+
+        return data;
     }
 
     if (budgetBtn) {
-        budgetBtn.addEventListener("click", function () {
+        budgetBtn.addEventListener("click", async function () {
             budgetPanel.style.display = "block";
             budgetPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            renderBudgetTracker();
+            await loadAndRenderBudgetTracker();
         });
     }
 
@@ -1025,7 +1071,13 @@ document.addEventListener("DOMContentLoaded", function () {
     // Add expense button
     const addExpenseBtn = document.getElementById("addExpenseBtn");
     if (addExpenseBtn) {
-        addExpenseBtn.addEventListener("click", function () {
+        addExpenseBtn.addEventListener("click", async function () {
+            const user = getCurrentUser();
+            if (!user) {
+                alert("Please log in to track expenses.");
+                return;
+            }
+
             const desc = document.getElementById("expenseDesc")?.value?.trim();
             const amount = parseFloat(document.getElementById("expenseAmount")?.value || 0);
             const category = document.getElementById("expenseCategory")?.value || 'other';
@@ -1035,26 +1087,49 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
             }
 
-            const expenses = getExpensesFromStorage();
-            expenses.push({
-                id: Date.now(),
-                description: desc,
-                amount: amount,
-                category: category,
-                date: new Date().toISOString().split('T')[0]
-            });
-            saveExpensesToStorage(expenses);
+            try {
+                const response = await authJsonFetch('/api/expenses', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        category,
+                        description: desc,
+                        amount,
+                        currency: 'USD',
+                        date: new Date().toISOString().split('T')[0]
+                    })
+                });
 
-            // Clear inputs
-            document.getElementById("expenseDesc").value = '';
-            document.getElementById("expenseAmount").value = '';
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.error || 'Failed to add expense');
+                }
 
-            renderBudgetTracker();
+                document.getElementById("expenseDesc").value = '';
+                document.getElementById("expenseAmount").value = '';
+                await loadAndRenderBudgetTracker();
+            } catch (error) {
+                alert(`Could not add expense: ${error.message}`);
+            }
         });
     }
 
-    function renderBudgetTracker() {
-        const expenses = getExpensesFromStorage();
+    async function loadAndRenderBudgetTracker() {
+        const expensesList = document.getElementById("expensesList");
+        if (expensesList) {
+            expensesList.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">Loading expenses...</p>';
+        }
+
+        try {
+            const data = await fetchExpensesFromApi();
+            renderBudgetTracker(data.expenses || []);
+        } catch (error) {
+            if (expensesList) {
+                expensesList.innerHTML = `<p style="text-align:center;color:#e74c3c;padding:20px;">${error.message}</p>`;
+            }
+        }
+    }
+
+    function renderBudgetTracker(expenses) {
         const budgetInput = document.getElementById("budget")?.value || '';
 
         // Parse budget (extract number)
@@ -1135,11 +1210,20 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // Make deleteExpense globally available
-    window.deleteExpense = function (id) {
-        let expenses = getExpensesFromStorage();
-        expenses = expenses.filter(e => e.id !== id);
-        saveExpensesToStorage(expenses);
-        renderBudgetTracker();
+    window.deleteExpense = async function (id) {
+        try {
+            const response = await authJsonFetch(`/api/expenses/${id}`, {
+                method: 'DELETE',
+                forceJsonHeader: false,
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to delete expense');
+            }
+            await loadAndRenderBudgetTracker();
+        } catch (error) {
+            alert(`Could not delete expense: ${error.message}`);
+        }
     };
 
     // ============================================
