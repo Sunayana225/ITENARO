@@ -1373,6 +1373,19 @@ def get_my_shared_itineraries():
                 and requester_email
                 and _normalized_email(item.get('invited_email')) == requester_email
             )
+            item['can_decline'] = bool(
+                item.get('status') == 'pending'
+                and (
+                    (requester_uid and str(item.get('collaborator_uid') or '') == requester_uid)
+                    or (requester_email and _normalized_email(item.get('invited_email')) == requester_email)
+                )
+            )
+            item['can_leave'] = bool(
+                item.get('status') == 'accepted'
+                and requester_uid
+                and str(item.get('collaborator_uid') or '') == requester_uid
+                and str(item.get('owner_uid') or '') != requester_uid
+            )
             result.append(item)
 
         return jsonify({"itineraries": result})
@@ -1542,6 +1555,201 @@ def accept_itinerary_invite(itinerary_id):
     except Exception as e:
         logging.error(f"Error accepting itinerary invite: {e}")
         return jsonify({"error": "Failed to accept invitation"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/decline-invite', methods=['POST'])
+@firebase_auth_required
+def decline_itinerary_invite(itinerary_id):
+    """Decline a pending itinerary invite by UID or invited email."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+
+    try:
+        conn = get_db_connection()
+        itinerary = conn.execute(
+            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            (itinerary_id,)
+        ).fetchone()
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if str(itinerary['firebase_uid'] or '') == requester_uid:
+            conn.close()
+            return jsonify({"error": "Owner cannot decline their own itinerary invite."}), 400
+
+        invite_row = conn.execute(
+            '''SELECT id, status, invited_email, collaborator_uid
+               FROM itinerary_collaborators
+               WHERE itinerary_id = ?
+                 AND (
+                       collaborator_uid = ?
+                    OR (? != '' AND LOWER(COALESCE(invited_email, '')) = ?)
+                 )
+               ORDER BY created_at DESC
+               LIMIT 1''',
+            (itinerary_id, requester_uid, requester_email, requester_email)
+        ).fetchone()
+
+        if not invite_row:
+            conn.close()
+            return jsonify({"error": "Invite not found for this user."}), 404
+
+        if invite_row['status'] != 'pending':
+            conn.close()
+            return jsonify({"error": "Only pending invites can be declined."}), 400
+
+        conn.execute(
+            'DELETE FROM itinerary_collaborators WHERE id = ?',
+            (invite_row['id'],)
+        )
+
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            requester_uid,
+            'decline_invitation',
+            {'invited_email': invite_row['invited_email']}
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Invitation declined."})
+    except Exception as e:
+        logging.error(f"Error declining itinerary invite: {e}")
+        return jsonify({"error": "Failed to decline invitation"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/leave', methods=['POST'])
+@firebase_auth_required
+def leave_itinerary_collaboration(itinerary_id):
+    """Allow accepted collaborators to leave an itinerary."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+
+    try:
+        conn = get_db_connection()
+        itinerary = conn.execute(
+            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            (itinerary_id,)
+        ).fetchone()
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if str(itinerary['firebase_uid'] or '') == requester_uid:
+            conn.close()
+            return jsonify({"error": "Owner cannot leave their own itinerary."}), 400
+
+        row = conn.execute(
+            '''SELECT id, status
+               FROM itinerary_collaborators
+               WHERE itinerary_id = ?
+                 AND collaborator_uid = ?
+               ORDER BY created_at DESC
+               LIMIT 1''',
+            (itinerary_id, requester_uid)
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({"error": "You are not a collaborator on this itinerary."}), 404
+
+        if row['status'] != 'accepted':
+            conn.close()
+            return jsonify({"error": "Only accepted collaborators can leave."}), 400
+
+        conn.execute('DELETE FROM itinerary_collaborators WHERE id = ?', (row['id'],))
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            requester_uid,
+            'leave_itinerary',
+            None
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "You left this itinerary."})
+    except Exception as e:
+        logging.error(f"Error leaving itinerary collaboration: {e}")
+        return jsonify({"error": "Failed to leave itinerary"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/collaborators', methods=['DELETE'])
+@firebase_auth_required
+def remove_itinerary_collaborator(itinerary_id):
+    """Allow itinerary owner to remove a collaborator or pending invite."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    collaborator_uid = str(data.get('collaborator_uid') or '').strip() or None
+    invited_email = _normalized_email(data.get('invited_email')) or None
+
+    if not collaborator_uid and not invited_email:
+        return jsonify({"error": "collaborator_uid or invited_email is required"}), 400
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access or not is_owner:
+            conn.close()
+            return jsonify({"error": "Only the itinerary owner can remove collaborators."}), 403
+
+        if collaborator_uid and str(itinerary['firebase_uid'] or '') == collaborator_uid:
+            conn.close()
+            return jsonify({"error": "Owner cannot be removed as collaborator."}), 400
+
+        if collaborator_uid:
+            row = conn.execute(
+                '''SELECT id, collaborator_uid, invited_email, status
+                   FROM itinerary_collaborators
+                   WHERE itinerary_id = ? AND collaborator_uid = ?
+                   ORDER BY created_at DESC
+                   LIMIT 1''',
+                (itinerary_id, collaborator_uid)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                '''SELECT id, collaborator_uid, invited_email, status
+                   FROM itinerary_collaborators
+                   WHERE itinerary_id = ? AND LOWER(COALESCE(invited_email, '')) = ?
+                   ORDER BY created_at DESC
+                   LIMIT 1''',
+                (itinerary_id, invited_email)
+            ).fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({"error": "Collaborator invite not found."}), 404
+
+        conn.execute('DELETE FROM itinerary_collaborators WHERE id = ?', (row['id'],))
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            auth_user['uid'],
+            'remove_collaborator',
+            {
+                'collaborator_uid': row['collaborator_uid'],
+                'invited_email': row['invited_email'],
+                'status': row['status'],
+            }
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Collaborator removed."})
+    except Exception as e:
+        logging.error(f"Error removing collaborator: {e}")
+        return jsonify({"error": "Failed to remove collaborator"}), 500
 
 
 @app.route('/api/itineraries/<int:itinerary_id>/collaborators', methods=['GET'])

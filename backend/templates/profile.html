@@ -1764,6 +1764,16 @@
                                 font-weight: 600;
                                 cursor: pointer;
                             ">🕒 Activity</button>
+                            <button type="button" onclick="removeCollaboratorFromItinerary(${it.id})" style="
+                                border: 1px solid #ffd1c4;
+                                border-radius: 8px;
+                                background: #fff7f4;
+                                color: #bf4d29;
+                                padding: 8px 12px;
+                                font-size: 0.82rem;
+                                font-weight: 600;
+                                cursor: pointer;
+                            ">🧹 Remove Collab</button>
                         </div>
                     </div>
                 `).join('')
@@ -1820,6 +1830,26 @@
                                     font-weight: 600;
                                     cursor: pointer;
                                 ">✅ Accept</button>` : ''}
+                                ${it.can_decline ? `<button type="button" onclick="declineItineraryInvite(${it.id})" style="
+                                    border: 1px solid #e6c3ba;
+                                    border-radius: 8px;
+                                    background: #fff5f2;
+                                    color: #a94424;
+                                    padding: 8px 12px;
+                                    font-size: 0.82rem;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                ">❌ Decline</button>` : ''}
+                                ${it.can_leave ? `<button type="button" onclick="leaveSharedItinerary(${it.id})" style="
+                                    border: 1px solid #d8d8d8;
+                                    border-radius: 8px;
+                                    background: #fafafa;
+                                    color: #555;
+                                    padding: 8px 12px;
+                                    font-size: 0.82rem;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                ">🚪 Leave</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -1846,6 +1876,60 @@
             } catch (err) {
                 console.error('Accept invite error:', err);
                 showMessage('Failed to accept invitation', 'error');
+            }
+        };
+
+        window.declineItineraryInvite = async function(itineraryId) {
+            if (!currentUser) return;
+
+            const shouldDecline = confirm('Decline this itinerary invitation?');
+            if (!shouldDecline) {
+                return;
+            }
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/decline-invite`, {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    showMessage('Invitation declined.', 'success');
+                    await loadSharedItineraries();
+                } else {
+                    showMessage(data.error || 'Failed to decline invitation', 'error');
+                }
+            } catch (err) {
+                console.error('Decline invite error:', err);
+                showMessage('Failed to decline invitation', 'error');
+            }
+        };
+
+        window.leaveSharedItinerary = async function(itineraryId) {
+            if (!currentUser) return;
+
+            const shouldLeave = confirm('Leave this shared itinerary?');
+            if (!shouldLeave) {
+                return;
+            }
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/leave`, {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    showMessage('You left the shared itinerary.', 'success');
+                    await loadSharedItineraries();
+                } else {
+                    showMessage(data.error || 'Failed to leave itinerary', 'error');
+                }
+            } catch (err) {
+                console.error('Leave itinerary error:', err);
+                showMessage('Failed to leave itinerary', 'error');
             }
         };
 
@@ -1878,6 +1962,55 @@
             } catch (err) {
                 console.error('Invite collaborator error:', err);
                 showMessage('Failed to invite collaborator', 'error');
+            }
+        };
+
+        window.removeCollaboratorFromItinerary = async function(itineraryId) {
+            if (!currentUser) return;
+
+            let hintMessage = 'Enter collaborator UID or invited email to remove:';
+
+            try {
+                const listResp = await authFetch(`/api/itineraries/${itineraryId}/collaborators`);
+                const listData = await listResp.json();
+                if (listResp.ok && Array.isArray(listData.collaborators) && listData.collaborators.length) {
+                    const preview = listData.collaborators.map(col => {
+                        const label = col.collaborator_uid || col.invited_email || 'unknown';
+                        return `${label} (${col.status || 'pending'})`;
+                    }).join('\n');
+                    hintMessage = `Current collaborators/invites:\n${preview}\n\nEnter collaborator UID or invited email to remove:`;
+                }
+            } catch (err) {
+                console.warn('Could not load collaborator list before removal:', err);
+            }
+
+            const input = prompt(hintMessage);
+            if (!input || !input.trim()) {
+                return;
+            }
+
+            const value = input.trim();
+            const payload = value.includes('@')
+                ? { invited_email: value.toLowerCase() }
+                : { collaborator_uid: value };
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/collaborators`, {
+                    method: 'DELETE',
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    showMessage('Collaborator removed.', 'success');
+                    await loadSavedItineraries();
+                    await loadSharedItineraries();
+                } else {
+                    showMessage(data.error || 'Failed to remove collaborator', 'error');
+                }
+            } catch (err) {
+                console.error('Remove collaborator error:', err);
+                showMessage('Failed to remove collaborator', 'error');
             }
         };
 

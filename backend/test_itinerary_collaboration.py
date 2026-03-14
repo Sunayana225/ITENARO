@@ -184,10 +184,19 @@ def test_invited_user_can_list_and_accept_pending_invite(client_with_auth):
     assert len(shared_body["itineraries"]) == 1
     assert shared_body["itineraries"][0]["status"] == "pending"
     assert shared_body["itineraries"][0]["can_accept"] is True
+    assert shared_body["itineraries"][0]["can_decline"] is True
+    assert shared_body["itineraries"][0]["can_leave"] is False
 
     accept_response = client.post("/api/itineraries/1/accept-invite", json={})
     assert accept_response.status_code == 200
     assert "accepted" in accept_response.get_json()["message"].lower()
+
+    accepted_shared_response = client.get("/api/my-shared-itineraries")
+    assert accepted_shared_response.status_code == 200
+    accepted_shared = accepted_shared_response.get_json()["itineraries"][0]
+    assert accepted_shared["status"] == "accepted"
+    assert accepted_shared["can_accept"] is False
+    assert accepted_shared["can_leave"] is True
 
     update_response = client.put(
         "/api/itineraries/1",
@@ -216,3 +225,87 @@ def test_outsider_cannot_accept_missing_invite(client_with_auth):
 
     assert response.status_code == 404
     assert "invite" in response.get_json()["error"].lower()
+
+
+def test_invited_user_can_decline_pending_invite(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "decline@example.com"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-7"
+    auth["email"] = "decline@example.com"
+
+    decline_response = client.post("/api/itineraries/1/decline-invite", json={})
+    assert decline_response.status_code == 200
+    assert "declined" in decline_response.get_json()["message"].lower()
+
+    conn = sqlite3.connect(app_module.DATABASE)
+    remaining_row = conn.execute(
+        "SELECT id FROM itinerary_collaborators WHERE itinerary_id = 1"
+    ).fetchone()
+    conn.close()
+
+    assert remaining_row is None
+
+
+def test_collaborator_can_leave_accepted_itinerary(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"collaborator_uid": "user-2"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-2"
+    auth["email"] = "user2@example.com"
+
+    leave_response = client.post("/api/itineraries/1/leave", json={})
+    assert leave_response.status_code == 200
+    assert "left" in leave_response.get_json()["message"].lower()
+
+    update_response = client.put(
+        "/api/itineraries/1",
+        json={"budget": "$1500"},
+    )
+    assert update_response.status_code == 403
+
+
+def test_owner_can_remove_pending_or_accepted_collaborator(client_with_auth):
+    client, _auth = client_with_auth
+
+    pending_invite = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "remove@example.com"},
+    )
+    assert pending_invite.status_code == 201
+
+    remove_pending = client.delete(
+        "/api/itineraries/1/collaborators",
+        json={"invited_email": "remove@example.com"},
+    )
+    assert remove_pending.status_code == 200
+
+    accepted_invite = client.post(
+        "/api/itineraries/1/invite",
+        json={"collaborator_uid": "user-3"},
+    )
+    assert accepted_invite.status_code == 201
+
+    remove_accepted = client.delete(
+        "/api/itineraries/1/collaborators",
+        json={"collaborator_uid": "user-3"},
+    )
+    assert remove_accepted.status_code == 200
+
+    conn = sqlite3.connect(app_module.DATABASE)
+    rows_left = conn.execute(
+        "SELECT COUNT(*) FROM itinerary_collaborators WHERE itinerary_id = 1"
+    ).fetchone()[0]
+    conn.close()
+
+    assert rows_left == 0
