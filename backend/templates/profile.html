@@ -1023,6 +1023,53 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Collaboration Manager Modal -->
+            <div id="collabManagerModal" class="modal">
+                <div class="modal-content" style="max-width: 720px;">
+                    <div class="modal-header">
+                        <h2 class="modal-title" id="collabManagerTitle">Manage Itinerary Collaboration</h2>
+                        <button class="close-btn" onclick="closeModal('collabManagerModal')">&times;</button>
+                    </div>
+                    <div style="display: grid; gap: 16px;">
+                        <div style="padding: 14px; border: 1px solid #f0e2da; border-radius: 10px; background: #fffaf8;">
+                            <div style="font-weight: 700; margin-bottom: 8px; color: #743f2a;">Invite collaborator</div>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <input
+                                    id="collabInviteInput"
+                                    type="text"
+                                    placeholder="Enter Firebase UID or email"
+                                    style="flex: 1 1 260px; padding: 10px 12px; border: 1px solid #e2d7d1; border-radius: 8px;"
+                                >
+                                <button type="button" class="btn btn-primary" onclick="submitCollaboratorInvite()">Send Invite</button>
+                            </div>
+                        </div>
+
+                        <div style="padding: 14px; border: 1px solid #efe8e3; border-radius: 10px; background: #fff;">
+                            <div style="font-weight: 700; margin-bottom: 8px; color: #555;">Current collaborators and invites</div>
+                            <div id="collabCurrentList" style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
+                                No collaborators loaded yet.
+                            </div>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <select id="collabRemoveSelect" style="flex: 1 1 260px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px;">
+                                    <option value="">Select collaborator/invite to remove</option>
+                                </select>
+                                <button type="button" class="btn btn-secondary" onclick="submitCollaboratorRemoval()">Remove Selected</button>
+                            </div>
+                        </div>
+
+                        <div style="padding: 14px; border: 1px solid #efe8e3; border-radius: 10px; background: #fff;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;">
+                                <div style="font-weight: 700; color: #555;">Recent activity</div>
+                                <button type="button" class="btn btn-secondary" style="padding: 8px 12px;" onclick="refreshCollaborationManager()">Refresh</button>
+                            </div>
+                            <div id="collabActivityList" style="max-height: 220px; overflow-y: auto; font-size: 0.88rem; color: #666;">
+                                No activity loaded yet.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -1035,6 +1082,7 @@
         let userProfile = null;
         let userWishlist = [];
         let availableDestinations = [];
+        let activeCollabManagerItineraryId = null;
 
         async function getAuthHeaders(includeJsonContentType = false) {
             const headers = {};
@@ -1821,6 +1869,227 @@
             }
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderCollabManagerCollaborators(collaborators) {
+            const listEl = document.getElementById('collabCurrentList');
+            const selectEl = document.getElementById('collabRemoveSelect');
+
+            if (!listEl || !selectEl) {
+                return;
+            }
+
+            const rows = Array.isArray(collaborators) ? collaborators : [];
+            if (!rows.length) {
+                listEl.innerHTML = '<p style="margin: 0; color: #888;">No collaborators or invites yet.</p>';
+                selectEl.innerHTML = '<option value="">No collaborators to remove</option>';
+                return;
+            }
+
+            listEl.innerHTML = rows.map((row) => {
+                const identifier = row.collaborator_uid || row.invited_email || 'Unknown';
+                const status = row.status || 'pending';
+                return `<div style="display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid #f2f2f2;">
+                    <span style="color:#444;">${escapeHtml(identifier)}</span>
+                    <span style="font-size:0.78rem; text-transform:uppercase; color:#888; font-weight:700;">${escapeHtml(status)}</span>
+                </div>`;
+            }).join('');
+
+            const options = ['<option value="">Select collaborator/invite to remove</option>'];
+            rows.forEach((row) => {
+                if (row.collaborator_uid) {
+                    options.push(`<option value="uid:${escapeHtml(row.collaborator_uid)}">${escapeHtml(row.collaborator_uid)} (${escapeHtml(row.status || 'accepted')})</option>`);
+                } else if (row.invited_email) {
+                    const email = String(row.invited_email).toLowerCase();
+                    options.push(`<option value="email:${escapeHtml(email)}">${escapeHtml(email)} (${escapeHtml(row.status || 'pending')})</option>`);
+                }
+            });
+            selectEl.innerHTML = options.join('');
+        }
+
+        function renderCollabManagerActivity(activity) {
+            const activityEl = document.getElementById('collabActivityList');
+            if (!activityEl) {
+                return;
+            }
+
+            const events = Array.isArray(activity) ? activity : [];
+            if (!events.length) {
+                activityEl.innerHTML = '<p style="margin: 0; color: #888;">No activity yet for this itinerary.</p>';
+                return;
+            }
+
+            activityEl.innerHTML = events.slice(0, 20).map((event) => {
+                const when = event.created_at ? new Date(event.created_at).toLocaleString() : 'Unknown time';
+                const actor = event.actor_uid || 'unknown';
+                const action = event.action || 'activity';
+                return `<div style="padding:8px 0; border-bottom:1px solid #f2f2f2;">
+                    <div style="font-size:0.76rem; color:#999;">${escapeHtml(when)}</div>
+                    <div style="font-size:0.88rem; color:#444;"><strong>${escapeHtml(actor)}</strong>: ${escapeHtml(action)}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadCollabManagerCollaborators(itineraryId) {
+            const resp = await authFetch(`/api/itineraries/${itineraryId}/collaborators`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || 'Failed to load collaborators');
+            }
+
+            renderCollabManagerCollaborators(data.collaborators || []);
+        }
+
+        async function loadCollabManagerActivity(itineraryId) {
+            const resp = await authFetch(`/api/itineraries/${itineraryId}/activity`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.error || 'Failed to load itinerary activity');
+            }
+
+            renderCollabManagerActivity(data.activity || []);
+        }
+
+        window.openCollaborationManager = async function(itineraryId, focusTarget = 'invite') {
+            if (!currentUser) return;
+
+            activeCollabManagerItineraryId = itineraryId;
+            const titleEl = document.getElementById('collabManagerTitle');
+            const inviteInput = document.getElementById('collabInviteInput');
+            if (titleEl) {
+                titleEl.textContent = `Manage itinerary #${itineraryId} collaboration`;
+            }
+            if (inviteInput) {
+                inviteInput.value = '';
+            }
+
+            renderCollabManagerCollaborators([]);
+            renderCollabManagerActivity([]);
+            openModal('collabManagerModal');
+
+            try {
+                await Promise.all([
+                    loadCollabManagerCollaborators(itineraryId),
+                    loadCollabManagerActivity(itineraryId),
+                ]);
+            } catch (err) {
+                console.error('Error loading collaboration manager data:', err);
+                showMessage(err.message || 'Failed to load collaboration details', 'error');
+            }
+
+            if (focusTarget === 'remove') {
+                document.getElementById('collabRemoveSelect')?.focus();
+            } else {
+                document.getElementById('collabInviteInput')?.focus();
+            }
+        };
+
+        window.refreshCollaborationManager = async function() {
+            if (!currentUser || !activeCollabManagerItineraryId) return;
+
+            try {
+                await Promise.all([
+                    loadCollabManagerCollaborators(activeCollabManagerItineraryId),
+                    loadCollabManagerActivity(activeCollabManagerItineraryId),
+                ]);
+                showMessage('Collaboration details refreshed.', 'success');
+            } catch (err) {
+                console.error('Error refreshing collaboration manager data:', err);
+                showMessage(err.message || 'Failed to refresh collaboration details', 'error');
+            }
+        };
+
+        window.submitCollaboratorInvite = async function() {
+            if (!currentUser || !activeCollabManagerItineraryId) return;
+
+            const inputEl = document.getElementById('collabInviteInput');
+            const value = (inputEl?.value || '').trim();
+            if (!value) {
+                showMessage('Enter a collaborator UID or email first.', 'error');
+                return;
+            }
+
+            const payload = value.includes('@')
+                ? { invited_email: value.toLowerCase() }
+                : { collaborator_uid: value };
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${activeCollabManagerItineraryId}/invite`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    showMessage(data.error || 'Failed to invite collaborator', 'error');
+                    return;
+                }
+
+                if (inputEl) {
+                    inputEl.value = '';
+                }
+
+                showMessage('Collaborator invite saved.', 'success');
+                await Promise.all([
+                    loadCollabManagerCollaborators(activeCollabManagerItineraryId),
+                    loadCollabManagerActivity(activeCollabManagerItineraryId),
+                    loadSharedItineraries(),
+                    loadNotifications(),
+                ]);
+            } catch (err) {
+                console.error('Invite collaborator error:', err);
+                showMessage('Failed to invite collaborator', 'error');
+            }
+        };
+
+        window.submitCollaboratorRemoval = async function() {
+            if (!currentUser || !activeCollabManagerItineraryId) return;
+
+            const selectEl = document.getElementById('collabRemoveSelect');
+            const selectedValue = (selectEl?.value || '').trim();
+            if (!selectedValue) {
+                showMessage('Select a collaborator or invite to remove.', 'error');
+                return;
+            }
+
+            const [targetType, targetValue] = selectedValue.split(':', 2);
+            const payload = targetType === 'email'
+                ? { invited_email: targetValue }
+                : { collaborator_uid: targetValue };
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${activeCollabManagerItineraryId}/collaborators`, {
+                    method: 'DELETE',
+                    body: JSON.stringify(payload),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    showMessage(data.error || 'Failed to remove collaborator', 'error');
+                    return;
+                }
+
+                showMessage('Collaborator removed.', 'success');
+                await Promise.all([
+                    loadSavedItineraries(),
+                    loadSharedItineraries(),
+                    loadNotifications(),
+                    loadCollabManagerCollaborators(activeCollabManagerItineraryId),
+                    loadCollabManagerActivity(activeCollabManagerItineraryId),
+                ]);
+            } catch (err) {
+                console.error('Remove collaborator error:', err);
+                showMessage('Failed to remove collaborator', 'error');
+            }
+        };
+
         function renderSavedItineraries(itineraries) {
             const container = document.getElementById('savedItinerariesContainer');
             if (!itineraries || itineraries.length === 0) {
@@ -1994,11 +2263,6 @@
         window.declineItineraryInvite = async function(itineraryId) {
             if (!currentUser) return;
 
-            const shouldDecline = confirm('Decline this itinerary invitation?');
-            if (!shouldDecline) {
-                return;
-            }
-
             try {
                 const resp = await authFetch(`/api/itineraries/${itineraryId}/decline-invite`, {
                     method: 'POST',
@@ -2021,11 +2285,6 @@
         window.leaveSharedItinerary = async function(itineraryId) {
             if (!currentUser) return;
 
-            const shouldLeave = confirm('Leave this shared itinerary?');
-            if (!shouldLeave) {
-                return;
-            }
-
             try {
                 const resp = await authFetch(`/api/itineraries/${itineraryId}/leave`, {
                     method: 'POST',
@@ -2046,113 +2305,15 @@
         };
 
         window.inviteCollaborator = async function(itineraryId) {
-            if (!currentUser) return;
-
-            const collaboratorInput = prompt('Enter collaborator Firebase UID or email:');
-            if (!collaboratorInput || !collaboratorInput.trim()) {
-                return;
-            }
-
-            const value = collaboratorInput.trim();
-            const payload = value.includes('@')
-                ? { invited_email: value.toLowerCase() }
-                : { collaborator_uid: value };
-
-            try {
-                const resp = await authFetch(`/api/itineraries/${itineraryId}/invite`, {
-                    method: 'POST',
-                    body: JSON.stringify(payload)
-                });
-                const data = await resp.json();
-
-                if (resp.ok) {
-                    const inviteType = payload.invited_email ? 'email invite' : 'collaborator invite';
-                    showMessage(`Collaborator ${inviteType} saved!`, 'success');
-                } else {
-                    showMessage(data.error || 'Failed to invite collaborator', 'error');
-                }
-            } catch (err) {
-                console.error('Invite collaborator error:', err);
-                showMessage('Failed to invite collaborator', 'error');
-            }
+            await openCollaborationManager(itineraryId, 'invite');
         };
 
         window.removeCollaboratorFromItinerary = async function(itineraryId) {
-            if (!currentUser) return;
-
-            let hintMessage = 'Enter collaborator UID or invited email to remove:';
-
-            try {
-                const listResp = await authFetch(`/api/itineraries/${itineraryId}/collaborators`);
-                const listData = await listResp.json();
-                if (listResp.ok && Array.isArray(listData.collaborators) && listData.collaborators.length) {
-                    const preview = listData.collaborators.map(col => {
-                        const label = col.collaborator_uid || col.invited_email || 'unknown';
-                        return `${label} (${col.status || 'pending'})`;
-                    }).join('\n');
-                    hintMessage = `Current collaborators/invites:\n${preview}\n\nEnter collaborator UID or invited email to remove:`;
-                }
-            } catch (err) {
-                console.warn('Could not load collaborator list before removal:', err);
-            }
-
-            const input = prompt(hintMessage);
-            if (!input || !input.trim()) {
-                return;
-            }
-
-            const value = input.trim();
-            const payload = value.includes('@')
-                ? { invited_email: value.toLowerCase() }
-                : { collaborator_uid: value };
-
-            try {
-                const resp = await authFetch(`/api/itineraries/${itineraryId}/collaborators`, {
-                    method: 'DELETE',
-                    body: JSON.stringify(payload)
-                });
-                const data = await resp.json();
-
-                if (resp.ok) {
-                    showMessage('Collaborator removed.', 'success');
-                    await loadSavedItineraries();
-                    await loadSharedItineraries();
-                } else {
-                    showMessage(data.error || 'Failed to remove collaborator', 'error');
-                }
-            } catch (err) {
-                console.error('Remove collaborator error:', err);
-                showMessage('Failed to remove collaborator', 'error');
-            }
+            await openCollaborationManager(itineraryId, 'remove');
         };
 
         window.showItineraryActivity = async function(itineraryId) {
-            if (!currentUser) return;
-
-            try {
-                const resp = await authFetch(`/api/itineraries/${itineraryId}/activity`);
-                const data = await resp.json();
-
-                if (!resp.ok) {
-                    showMessage(data.error || 'Failed to load itinerary activity', 'error');
-                    return;
-                }
-
-                if (!Array.isArray(data.activity) || data.activity.length === 0) {
-                    alert('No activity yet for this itinerary.');
-                    return;
-                }
-
-                const preview = data.activity.slice(0, 8).map(event => {
-                    const when = event.created_at ? new Date(event.created_at).toLocaleString() : 'Unknown time';
-                    return `${when} | ${event.actor_uid}: ${event.action}`;
-                }).join('\n');
-
-                alert(`Recent itinerary activity:\n\n${preview}`);
-            } catch (err) {
-                console.error('Load activity error:', err);
-                showMessage('Failed to load itinerary activity', 'error');
-            }
+            await openCollaborationManager(itineraryId, 'activity');
         };
 
         // Load passport and itineraries when profile loads
