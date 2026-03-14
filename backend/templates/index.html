@@ -116,6 +116,11 @@
         <!-- Itinerary Display Section -->
         <div id="itinerary" class="container itinerary-results-container" style="display: none;">
             <h2>Your Personalized Itinerary</h2>
+            <div id="offlineBanner" class="offline-banner" style="display: none;">
+                You are offline. Showing your last cached itinerary in read-only mode.
+            </div>
+            <div id="syncIndicator" class="sync-indicator">Not synced yet</div>
+            <div id="priceHintsBar" class="price-hints-bar" style="display: none;"></div>
 
             <!-- Export Toolbar -->
             <div id="exportToolbar" class="export-toolbar">
@@ -147,6 +152,21 @@
                 <h3>📍 Interactive Route Map</h3>
                 <div id="dayFilterBar" class="day-filter-bar"></div>
                 <div id="itineraryMap" class="itinerary-map"></div>
+            </div>
+
+            <div id="eventsPanel" class="events-panel" style="display: none;">
+                <div class="events-panel-header">
+                    <h3>🎟️ Local Events</h3>
+                    <select id="eventsCategoryFilter" class="events-category-filter">
+                        <option value="all">All categories</option>
+                        <option value="music">Music</option>
+                        <option value="food">Food</option>
+                        <option value="culture">Culture</option>
+                        <option value="sports">Sports</option>
+                        <option value="community">Community</option>
+                    </select>
+                </div>
+                <div id="eventsList" class="events-list"></div>
             </div>
 
             <!-- Itinerary Content -->

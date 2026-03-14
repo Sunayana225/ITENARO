@@ -21,8 +21,10 @@ document.addEventListener("DOMContentLoaded", function () {
     let selectedPreferences = [];
     let currentItineraryData = null; // Store structured itinerary data
     let currentDayToReplan = null;
+    let currentEvents = [];
     let itineraryMap = null; // Leaflet map instance
     let mapMarkers = []; // Store map markers
+    let eventMarkers = []; // Store events markers
     let mapPolylines = []; // Store route lines
 
     const replanModal = document.getElementById("replanModal");
@@ -31,6 +33,114 @@ document.addEventListener("DOMContentLoaded", function () {
     const replanModalTitle = document.getElementById("replanModalTitle");
     const replanCancelBtn = document.getElementById("replanCancelBtn");
     const replanSubmitBtn = document.getElementById("replanSubmitBtn");
+    const offlineBanner = document.getElementById("offlineBanner");
+    const syncIndicator = document.getElementById("syncIndicator");
+    const priceHintsBar = document.getElementById("priceHintsBar");
+    const eventsPanel = document.getElementById("eventsPanel");
+    const eventsList = document.getElementById("eventsList");
+    const eventsCategoryFilter = document.getElementById("eventsCategoryFilter");
+
+    function updateSyncIndicator(label = "", timestamp = null) {
+        if (!syncIndicator) return;
+        const ts = timestamp || new Date().toISOString();
+        const human = new Date(ts).toLocaleString();
+        syncIndicator.textContent = label ? `${label} · Last updated ${human}` : `Last updated ${human}`;
+    }
+
+    function getOfflineItineraryKey() {
+        return 'itenaro_last_itinerary';
+    }
+
+    function showOfflineBanner(isOffline) {
+        if (!offlineBanner) return;
+        offlineBanner.style.display = isOffline ? 'block' : 'none';
+    }
+
+    function cacheItineraryInServiceWorker(offlinePayload) {
+        if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return;
+        try {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'CACHE_ITINERARY',
+                payload: offlinePayload,
+            });
+        } catch (messageError) {
+            console.warn('Failed to send itinerary payload to service worker:', messageError);
+        }
+    }
+
+    function persistOfflineItinerary(sourceLabel = 'sync') {
+        if (!currentItineraryData) return;
+
+        const payload = {
+            itinerary_data: currentItineraryData,
+            itinerary_html: document.getElementById('itinerary-content')?.innerHTML || '',
+            destination: document.getElementById('destination')?.value || '',
+            budget: document.getElementById('budget')?.value || '',
+            duration: document.getElementById('duration')?.value || '',
+            purpose: document.getElementById('purpose')?.value || '',
+            saved_at: new Date().toISOString(),
+        };
+
+        localStorage.setItem(getOfflineItineraryKey(), JSON.stringify(payload));
+        cacheItineraryInServiceWorker(payload);
+        updateSyncIndicator(sourceLabel, payload.saved_at);
+    }
+
+    async function loadOfflineItineraryIfAvailable() {
+        if (currentItineraryData) return false;
+
+        let raw = localStorage.getItem(getOfflineItineraryKey());
+
+        if (!raw && !navigator.onLine) {
+            try {
+                const swResponse = await fetch('/offline/last-itinerary.json');
+                if (swResponse.ok) {
+                    const swPayload = await swResponse.json();
+                    raw = JSON.stringify(swPayload);
+                    localStorage.setItem(getOfflineItineraryKey(), raw);
+                }
+            } catch (_swReadError) {
+                // Ignore and continue fallback flow.
+            }
+        }
+
+        if (!raw) return false;
+
+        try {
+            const payload = JSON.parse(raw);
+            if (!payload || !payload.itinerary_data || !Array.isArray(payload.itinerary_data.days)) {
+                return false;
+            }
+
+            const itinerarySection = document.getElementById("itinerary");
+            const itineraryContent = document.getElementById("itinerary-content");
+            if (itinerarySection) itinerarySection.style.display = 'block';
+            if (itineraryContent && payload.itinerary_html) itineraryContent.innerHTML = payload.itinerary_html;
+
+            currentItineraryData = payload.itinerary_data;
+            renderItineraryMap(currentItineraryData);
+            injectReplanButtons();
+
+            if (payload.destination && document.getElementById('destination')) {
+                document.getElementById('destination').value = payload.destination;
+            }
+            if (payload.duration && document.getElementById('duration')) {
+                document.getElementById('duration').value = payload.duration;
+            }
+            if (payload.budget && document.getElementById('budget')) {
+                document.getElementById('budget').value = payload.budget;
+            }
+            if (payload.purpose && document.getElementById('purpose')) {
+                document.getElementById('purpose').value = payload.purpose;
+            }
+
+            updateSyncIndicator('Offline cache', payload.saved_at);
+            return true;
+        } catch (error) {
+            console.error('Failed to load offline itinerary:', error);
+            return false;
+        }
+    }
 
     async function getAuthHeaders(includeJsonContentType = false) {
         const user = getCurrentUser();
@@ -79,6 +189,37 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize dropdown handler
     initDropdownHandler();
+
+    showOfflineBanner(!navigator.onLine);
+    try {
+        const cached = JSON.parse(localStorage.getItem(getOfflineItineraryKey()) || '{}');
+        if (cached && cached.saved_at) {
+            updateSyncIndicator('Cached', cached.saved_at);
+        }
+    } catch (_ignoreCacheError) {
+        // Ignore malformed cache values and continue normal flow.
+    }
+
+    if (!navigator.onLine) {
+        loadOfflineItineraryIfAvailable();
+    }
+
+    window.addEventListener('online', function () {
+        showOfflineBanner(false);
+        updateSyncIndicator('Back online');
+    });
+
+    window.addEventListener('offline', function () {
+        showOfflineBanner(true);
+        loadOfflineItineraryIfAvailable();
+    });
+
+    if (eventsCategoryFilter) {
+        eventsCategoryFilter.addEventListener('change', function () {
+            renderEventsList();
+            showDayOnMap('all');
+        });
+    }
 
     // Check if step1 exists before running step-related code
     if (document.getElementById("step1")) {
@@ -153,6 +294,156 @@ document.addEventListener("DOMContentLoaded", function () {
             .catch(error => console.error("Error fetching weather:", error));
     }
 
+    async function loadTravelPriceHints(destination) {
+        if (!priceHintsBar || !destination) return;
+
+        try {
+            const duration = document.getElementById('duration')?.value || '3';
+            const response = await fetch(
+                `/api/travel-price-hints?destination=${encodeURIComponent(destination)}&duration=${encodeURIComponent(duration)}&currency=USD`
+            );
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load price hints');
+            }
+
+            priceHintsBar.innerHTML = `
+                <div class="price-hint-pill">✈ Flights from ~$${Number(data.flight_from || 0).toFixed(0)} <a href="${data.flight_link}" target="_blank" rel="noopener noreferrer">Search</a></div>
+                <div class="price-hint-pill">🏨 Hotels from ~$${Number(data.hotel_from_per_night || 0).toFixed(0)}/night <a href="${data.hotel_link}" target="_blank" rel="noopener noreferrer">Browse</a></div>
+                <div class="price-hint-pill">ℹ ${data.note || 'Indicative price hints only.'}</div>
+            `;
+            priceHintsBar.style.display = 'flex';
+        } catch (error) {
+            console.error('Price hints error:', error);
+            priceHintsBar.style.display = 'none';
+        }
+    }
+
+    async function loadEventsFeed(destination) {
+        if (!eventsPanel || !eventsList || !destination) return;
+
+        try {
+            const response = await fetch(`/api/events-feed?destination=${encodeURIComponent(destination)}`);
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to load events');
+            }
+
+            currentEvents = Array.isArray(payload.events) ? payload.events : [];
+            renderEventsList();
+            eventsPanel.style.display = currentEvents.length ? 'block' : 'none';
+            if (itineraryMap && currentItineraryData) {
+                showDayOnMap('all');
+            }
+        } catch (error) {
+            console.error('Events feed error:', error);
+            eventsPanel.style.display = 'none';
+            currentEvents = [];
+        }
+    }
+
+    function getFilteredEvents() {
+        const category = eventsCategoryFilter?.value || 'all';
+        if (category === 'all') {
+            return currentEvents;
+        }
+        return currentEvents.filter(evt => String(evt.category || '').toLowerCase() === category);
+    }
+
+    function renderEventsList() {
+        if (!eventsList) return;
+
+        const filteredEvents = getFilteredEvents();
+        if (!filteredEvents.length) {
+            eventsList.innerHTML = '<p style="color:#888; margin:0;">No events available for this category right now.</p>';
+            return;
+        }
+
+        const dayOptions = Array.isArray(currentItineraryData?.days)
+            ? currentItineraryData.days.map(day => `<option value="${day.day}">Day ${day.day}</option>`).join('')
+            : '<option value="1">Day 1</option>';
+
+        eventsList.innerHTML = filteredEvents.map((event, idx) => `
+            <div class="event-card">
+                <h4>${event.name || 'Event'}</h4>
+                <div class="event-meta">${event.start_time || 'TBD'} · ${event.venue || 'Venue TBA'}</div>
+                <div class="event-meta">Category: ${event.category || 'other'}${event.price_hint ? ` · ${event.price_hint}` : ''}</div>
+                ${event.url ? `<div class="event-meta"><a href="${event.url}" target="_blank" rel="noopener noreferrer">Open tickets</a></div>` : ''}
+                <div class="event-actions">
+                    <select id="event-day-select-${idx}">${dayOptions}</select>
+                    <button type="button" data-event-index="${idx}" class="event-add-btn">Add</button>
+                </div>
+            </div>
+        `).join('');
+
+        eventsList.querySelectorAll('.event-add-btn').forEach(button => {
+            button.addEventListener('click', async function () {
+                const eventIndex = parseInt(this.dataset.eventIndex, 10);
+                await addEventToItinerary(eventIndex);
+            });
+        });
+    }
+
+    async function refreshItineraryHtmlFromData() {
+        if (!currentItineraryData) return;
+
+        try {
+            const response = await fetch('/api/render-itinerary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ itinerary_data: currentItineraryData })
+            });
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to re-render itinerary');
+            }
+
+            const itineraryContent = document.getElementById('itinerary-content');
+            if (itineraryContent && payload.itinerary) {
+                itineraryContent.innerHTML = payload.itinerary;
+            }
+
+            injectReplanButtons();
+            persistOfflineItinerary('Updated');
+        } catch (error) {
+            console.error('Render itinerary error:', error);
+        }
+    }
+
+    async function addEventToItinerary(eventIndex) {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) {
+            alert('Generate an itinerary first before adding events.');
+            return;
+        }
+
+        const filteredEvents = getFilteredEvents();
+        const event = filteredEvents[eventIndex];
+        if (!event) return;
+
+        const daySelect = document.getElementById(`event-day-select-${eventIndex}`);
+        const dayNumber = parseInt(daySelect?.value || event.day_suggestion || 1, 10);
+
+        const targetDay = currentItineraryData.days.find(day => parseInt(day.day, 10) === dayNumber);
+        if (!targetDay) {
+            alert('Selected day not found in itinerary.');
+            return;
+        }
+
+        targetDay.places = targetDay.places || [];
+        targetDay.places.push({
+            name: event.name || 'Local Event',
+            time: event.start_time || 'Evening',
+            description: event.description || `Attend ${event.name || 'a local event'} at ${event.venue || 'the venue'}.`,
+            cost_estimate: event.price_hint || 'Varies',
+            lat: event.lat,
+            lng: event.lng,
+        });
+
+        await refreshItineraryHtmlFromData();
+        renderItineraryMap(currentItineraryData);
+        highlightReplannedDay(dayNumber);
+    }
+
     // ============================================
     // GENERATE ITINERARY (Updated with Map + Data)
     // ============================================
@@ -207,10 +498,13 @@ document.addEventListener("DOMContentLoaded", function () {
                     currentItineraryData = data.itinerary_data;
                     renderItineraryMap(currentItineraryData);
                     injectReplanButtons();
+                    persistOfflineItinerary('Generated');
                 }
 
                 // Fetch weather for destination
                 fetchWeather(destination);
+                loadTravelPriceHints(destination);
+                loadEventsFeed(destination);
             })
             .catch(error => {
                 console.error("Error:", error);
@@ -297,27 +591,31 @@ document.addEventListener("DOMContentLoaded", function () {
     function showDayOnMap(dayNum) {
         if (!itineraryMap || !currentItineraryData) return;
 
+        const normalizedDayNum = dayNum === 'all' ? 'all' : parseInt(dayNum, 10);
+
         // Update filter button states
         document.querySelectorAll('.day-filter-btn').forEach(btn => {
             btn.classList.remove('active');
-            if ((dayNum === 'all' && btn.textContent === 'All Days') ||
-                (btn.dataset.day && parseInt(btn.dataset.day) === dayNum)) {
+            if ((normalizedDayNum === 'all' && btn.textContent === 'All Days') ||
+                (btn.dataset.day && parseInt(btn.dataset.day, 10) === normalizedDayNum)) {
                 btn.classList.add('active');
             }
         });
 
         // Clear existing markers and lines
         mapMarkers.forEach(m => m.remove());
+        eventMarkers.forEach(m => m.remove());
         mapPolylines.forEach(p => p.remove());
         mapMarkers = [];
+        eventMarkers = [];
         mapPolylines = [];
 
         const bounds = [];
         const dayColors = ['#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e67e22', '#34495e', '#e91e63', '#00bcd4'];
 
-        const daysToShow = dayNum === 'all'
+        const daysToShow = normalizedDayNum === 'all'
             ? currentItineraryData.days
-            : currentItineraryData.days.filter(d => d.day === dayNum);
+            : currentItineraryData.days.filter(d => parseInt(d.day, 10) === normalizedDayNum);
 
         daysToShow.forEach((day, dayIndex) => {
             const color = dayColors[dayIndex % dayColors.length];
@@ -381,10 +679,65 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
 
+        renderEventMarkers(normalizedDayNum, bounds);
+
         // Fit map to bounds
         if (bounds.length > 0) {
             itineraryMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
         }
+    }
+
+    function renderEventMarkers(dayNum, bounds) {
+        if (!itineraryMap || !Array.isArray(currentEvents) || currentEvents.length === 0) {
+            return;
+        }
+
+        const filteredByCategory = getFilteredEvents();
+        filteredByCategory.forEach(event => {
+            const daySuggestion = parseInt(event.day_suggestion, 10);
+            if (dayNum !== 'all' && daySuggestion && daySuggestion !== dayNum) {
+                return;
+            }
+
+            if (typeof event.lat !== 'number' || typeof event.lng !== 'number') {
+                return;
+            }
+
+            const latlng = [event.lat, event.lng];
+            bounds.push(latlng);
+
+            const icon = L.divIcon({
+                className: 'event-map-marker',
+                html: `<div style="
+                    background: #16a085;
+                    color: white;
+                    width: 26px;
+                    height: 26px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 2px solid white;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+                    font-size: 13px;
+                ">🎫</div>`,
+                iconSize: [26, 26],
+                iconAnchor: [13, 13],
+                popupAnchor: [0, -14],
+            });
+
+            const marker = L.marker(latlng, { icon }).addTo(itineraryMap);
+            marker.bindPopup(`
+                <div class="map-popup-content">
+                    <h4>🎟️ ${event.name || 'Local Event'}</h4>
+                    <p>🗓️ ${event.start_time || 'TBD'}</p>
+                    <p>📍 ${event.venue || 'Venue TBA'}</p>
+                    ${event.url ? `<p><a href="${event.url}" target="_blank" rel="noopener noreferrer">Open event</a></p>` : ''}
+                </div>
+            `, { maxWidth: 280 });
+
+            eventMarkers.push(marker);
+        });
     }
 
     function injectReplanButtons() {
@@ -506,6 +859,7 @@ document.addEventListener("DOMContentLoaded", function () {
             renderItineraryMap(currentItineraryData);
             injectReplanButtons();
             highlightReplannedDay(payload.day_number || currentDayToReplan);
+            persistOfflineItinerary('Replanned');
             closeReplanModal();
         } catch (error) {
             showReplanStatus(error.message || 'Failed to re-plan day. Please try again.', true);
@@ -1083,6 +1437,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const data = await response.json();
                 if (response.ok && data.share_url) {
+                    persistOfflineItinerary('Saved');
                     // Copy to clipboard
                     try {
                         await navigator.clipboard.writeText(data.share_url);

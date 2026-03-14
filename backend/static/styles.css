@@ -1557,6 +1557,129 @@ h2 {
     font-size: 0.85rem;
 }
 
+.offline-banner {
+    margin: 0 0 14px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #fff3cd;
+    border: 1px solid #ffe08a;
+    color: #8a6d3b;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.sync-indicator {
+    margin: 0 0 12px 0;
+    color: #888;
+    font-size: 0.83rem;
+    text-align: right;
+}
+
+.price-hints-bar {
+    margin-bottom: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.price-hint-pill {
+    background: #fff;
+    border: 1.5px solid #f0f0f0;
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 0.86rem;
+    color: #444;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.price-hint-pill a {
+    text-decoration: none;
+    color: #ff5733;
+    font-weight: 700;
+}
+
+.events-panel {
+    margin-bottom: 22px;
+    background: #fff;
+    border-radius: 14px;
+    padding: 16px;
+    border: 1.5px solid #eee;
+    box-shadow: 0 3px 14px rgba(0, 0, 0, 0.06);
+}
+
+.events-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.events-panel-header h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #333;
+}
+
+.events-category-filter {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+}
+
+.events-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.event-card {
+    border: 1px solid #ececec;
+    border-radius: 10px;
+    padding: 12px;
+    background: #fafafa;
+}
+
+.event-card h4 {
+    margin: 0 0 6px 0;
+    font-size: 0.95rem;
+    color: #333;
+}
+
+.event-meta {
+    font-size: 0.82rem;
+    color: #666;
+    margin-bottom: 6px;
+}
+
+.event-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.event-actions select {
+    flex: 1;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    padding: 5px 6px;
+    font-size: 0.8rem;
+}
+
+.event-actions button {
+    border: none;
+    border-radius: 7px;
+    background: #2ecc71;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
 /* ============================================
    EXPORT TOOLBAR STYLES
    ============================================ */
@@ -2261,6 +2384,10 @@ h2 {
     .itin-budget-grid {
         grid-template-columns: 1fr;
     }
+
+    .events-list {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 @media (max-width: 600px) {
@@ -2279,6 +2406,19 @@ h2 {
 
     .packing-item {
         padding: 8px 14px;
+    }
+
+    .events-panel-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .events-list {
+        grid-template-columns: 1fr;
+    }
+
+    .price-hints-bar {
+        flex-direction: column;
     }
 }
 

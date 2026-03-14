@@ -1,5 +1,5 @@
 // ITENARO Service Worker - Enables offline mode for travelers
-const CACHE_NAME = 'itenaro-v2';
+const CACHE_NAME = 'itenaro-v3';
 const STATIC_ASSETS = [
     '/',
     '/static/styles.css',
@@ -15,7 +15,9 @@ const STATIC_ASSETS = [
     'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap'
 ];
 
-const DYNAMIC_CACHE = 'itenaro-dynamic-v2';
+const DYNAMIC_CACHE = 'itenaro-dynamic-v3';
+const OFFLINE_ITINERARY_URL = '/offline/last-itinerary.json';
+const OFFLINE_ITINERARY_META_URL = '/offline/last-itinerary-meta.json';
 
 // Install event - cache static assets
 self.addEventListener('install', event => {
@@ -48,6 +50,31 @@ self.addEventListener('activate', event => {
     self.clients.claim();
 });
 
+// Message event - cache explicit itinerary payload for offline landing mode
+self.addEventListener('message', event => {
+    const { data } = event || {};
+    if (!data || data.type !== 'CACHE_ITINERARY' || !data.payload) {
+        return;
+    }
+
+    event.waitUntil((async () => {
+        const cache = await caches.open(DYNAMIC_CACHE);
+        await cache.put(
+            OFFLINE_ITINERARY_URL,
+            new Response(JSON.stringify(data.payload), {
+                headers: { 'Content-Type': 'application/json' }
+            })
+        );
+
+        await cache.put(
+            OFFLINE_ITINERARY_META_URL,
+            new Response(JSON.stringify({ cached_at: new Date().toISOString() }), {
+                headers: { 'Content-Type': 'application/json' }
+            })
+        );
+    })());
+});
+
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', event => {
     const { request } = event;
@@ -55,6 +82,24 @@ self.addEventListener('fetch', event => {
 
     // Skip non-GET requests
     if (request.method !== 'GET') return;
+
+    // Explicit offline itinerary cache endpoint
+    if (url.pathname === OFFLINE_ITINERARY_URL || url.pathname === OFFLINE_ITINERARY_META_URL) {
+        event.respondWith(
+            caches.open(DYNAMIC_CACHE).then(cache =>
+                cache.match(url.pathname).then(cached => {
+                    if (cached) {
+                        return cached;
+                    }
+                    return new Response(JSON.stringify({ error: 'No cached itinerary available.' }), {
+                        headers: { 'Content-Type': 'application/json' },
+                        status: 404,
+                    });
+                })
+            )
+        );
+        return;
+    }
 
     // Skip API calls that need fresh data
     if (url.pathname.startsWith('/api/') ||

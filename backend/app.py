@@ -9,6 +9,7 @@ import sqlite3
 import time
 from functools import wraps
 from datetime import datetime, timedelta  # Import datetime for blog post timestamps
+from urllib.parse import quote_plus
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
@@ -44,6 +45,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "").strip()
 ALLOW_INSECURE_UID_HEADER = os.getenv("ALLOW_INSECURE_UID_HEADER", "false").lower() in ("1", "true", "yes")
+TICKETMASTER_API_KEY = os.getenv("TICKETMASTER_API_KEY", "").strip()
 
 FIREBASE_HTTP_REQUEST = google_auth_requests.Request()
 
@@ -988,6 +990,144 @@ def _log_itinerary_activity(conn, itinerary_id, actor_uid, action, details=None)
            VALUES (?, ?, ?, ?)''',
         (itinerary_id, actor_uid, action, details_text)
     )
+
+
+def _estimate_price_hints(destination, duration_days=3, currency='USD'):
+    """Build practical price hint estimates and deep links for booking research."""
+    seed = sum(ord(char) for char in destination.lower())
+    duration_days = max(1, min(duration_days, 30))
+
+    flight_estimate = 220 + (seed % 520)
+    hotel_nightly = 55 + (seed % 170)
+    total_hotel = hotel_nightly * duration_days
+
+    return {
+        "destination": destination,
+        "currency": currency,
+        "flight_from": round(flight_estimate, 2),
+        "hotel_from_per_night": round(hotel_nightly, 2),
+        "hotel_estimated_total": round(total_hotel, 2),
+        "flight_link": f"https://www.aviasales.com/search?destination={quote_plus(destination)}",
+        "hotel_link": f"https://search.hotellook.com/?destination={quote_plus(destination)}",
+        "note": "Indicative price hints only. Final prices vary by date and availability.",
+        "source": "estimation",
+    }
+
+
+def _geocode_destination(destination):
+    """Resolve destination to lat/lng via OpenStreetMap Nominatim."""
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": destination, "format": "json", "limit": 1},
+            headers={"User-Agent": "ITENARO/1.0"},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            return None
+
+        payload = resp.json()
+        if not payload:
+            return None
+
+        return {
+            "lat": float(payload[0].get("lat")),
+            "lng": float(payload[0].get("lon")),
+        }
+    except Exception:
+        return None
+
+
+def _generate_fallback_events(destination, start_date=None, end_date=None):
+    """Generate local fallback events so the map panel is still useful without external API keys."""
+    center = _geocode_destination(destination) or {"lat": 20.5937, "lng": 78.9629}
+    categories = ["music", "food", "culture", "sports", "community"]
+    template_names = [
+        "Night Market Walk",
+        "Live Acoustic Session",
+        "Street Food Crawl",
+        "Cultural Craft Fair",
+        "Sunset Community Run",
+    ]
+    events = []
+
+    for idx, name in enumerate(template_names):
+        day_suggestion = (idx % 3) + 1
+        events.append({
+            "id": f"fallback-{idx + 1}",
+            "name": f"{destination} {name}",
+            "category": categories[idx % len(categories)],
+            "start_time": f"Day {day_suggestion}, {6 + idx}:00 PM",
+            "venue": f"{destination} Central District",
+            "url": f"https://www.ticketmaster.com/search?q={quote_plus(destination + ' ' + name)}",
+            "lat": center["lat"] + ((idx - 2) * 0.01),
+            "lng": center["lng"] + ((2 - idx) * 0.01),
+            "description": "Community-curated local event suggestion.",
+            "day_suggestion": day_suggestion,
+            "price_hint": "Varies",
+            "source": "fallback",
+            "start_date": start_date,
+            "end_date": end_date,
+        })
+
+    return events
+
+
+def _fetch_ticketmaster_events(destination, start_date=None, end_date=None):
+    """Fetch events from Ticketmaster Discovery API when key is configured."""
+    if not TICKETMASTER_API_KEY:
+        return []
+
+    try:
+        params = {
+            "apikey": TICKETMASTER_API_KEY,
+            "city": destination,
+            "size": 20,
+            "sort": "date,asc",
+        }
+        if start_date:
+            params["startDateTime"] = f"{start_date}T00:00:00Z"
+        if end_date:
+            params["endDateTime"] = f"{end_date}T23:59:59Z"
+
+        resp = requests.get(
+            "https://app.ticketmaster.com/discovery/v2/events.json",
+            params=params,
+            timeout=6,
+        )
+        if resp.status_code != 200:
+            return []
+
+        payload = resp.json()
+        raw_events = payload.get("_embedded", {}).get("events", [])
+        events = []
+
+        for idx, event in enumerate(raw_events):
+            venue = (event.get("_embedded", {}).get("venues") or [{}])[0]
+            location = venue.get("location", {}) if isinstance(venue, dict) else {}
+            classifications = event.get("classifications") or []
+            segment = (classifications[0].get("segment", {}) if classifications else {})
+            category = str(segment.get("name", "other")).lower()
+
+            events.append({
+                "id": event.get("id") or f"tm-{idx}",
+                "name": event.get("name", "Event"),
+                "category": category,
+                "start_time": event.get("dates", {}).get("start", {}).get("localDate", "TBD"),
+                "venue": venue.get("name", "Venue TBA") if isinstance(venue, dict) else "Venue TBA",
+                "url": event.get("url", ""),
+                "lat": float(location.get("latitude")) if location.get("latitude") else None,
+                "lng": float(location.get("longitude")) if location.get("longitude") else None,
+                "description": event.get("info") or event.get("pleaseNote") or "",
+                "day_suggestion": (idx % 3) + 1,
+                "price_hint": "Ticketed",
+                "source": "ticketmaster",
+            })
+
+        return events
+    except Exception as fetch_error:
+        logging.warning(f"Ticketmaster fetch failed: {fetch_error}")
+        return []
 
 
 @app.route('/api/save-itinerary', methods=['POST'])
@@ -2017,6 +2157,65 @@ def api_search():
         logging.error(f"/api/search error: {e}")
 
     return jsonify(results)
+
+
+@app.route('/api/render-itinerary', methods=['POST'])
+def render_itinerary_from_data():
+    """Render itinerary HTML from structured itinerary JSON."""
+    data = request.json or {}
+    itinerary_data = data.get('itinerary_data')
+
+    if not isinstance(itinerary_data, dict) or not isinstance(itinerary_data.get('days'), list):
+        return jsonify({"error": "itinerary_data with days list is required"}), 400
+
+    try:
+        itinerary_html = format_itinerary_response(json.dumps(itinerary_data))
+        return jsonify({"itinerary": itinerary_html})
+    except Exception as e:
+        logging.error(f"Error rendering itinerary data: {e}")
+        return jsonify({"error": "Failed to render itinerary"}), 500
+
+
+@app.route('/api/travel-price-hints', methods=['GET'])
+def travel_price_hints():
+    """Return practical indicative flight/hotel price hints for a destination."""
+    destination = str(request.args.get('destination', '')).strip()
+    duration_raw = request.args.get('duration', '3')
+    currency = str(request.args.get('currency', 'USD')).strip().upper() or 'USD'
+
+    if not destination:
+        return jsonify({"error": "destination is required"}), 400
+
+    duration_days = _coerce_positive_int(duration_raw) or 3
+    hints = _estimate_price_hints(destination, duration_days, currency)
+    return jsonify(hints)
+
+
+@app.route('/api/events-feed', methods=['GET'])
+def events_feed():
+    """Return destination event suggestions for map integration."""
+    destination = str(request.args.get('destination', '')).strip()
+    start_date = str(request.args.get('start_date', '')).strip() or None
+    end_date = str(request.args.get('end_date', '')).strip() or None
+    category_filter = str(request.args.get('category', '')).strip().lower() or None
+
+    if not destination:
+        return jsonify({"error": "destination is required"}), 400
+
+    events = _fetch_ticketmaster_events(destination, start_date, end_date)
+    source = 'ticketmaster' if events else 'fallback'
+
+    if not events:
+        events = _generate_fallback_events(destination, start_date, end_date)
+
+    if category_filter and category_filter != 'all':
+        events = [evt for evt in events if str(evt.get('category', '')).lower() == category_filter]
+
+    return jsonify({
+        "destination": destination,
+        "source": source,
+        "events": events,
+    })
 
 if __name__ == '__main__':
     # Run on localhost with specific port for Firebase
