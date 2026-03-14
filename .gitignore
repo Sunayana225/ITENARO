@@ -77,6 +77,8 @@ backend/static/uploads/*
 config.py
 secrets.py
 firebase-config-real.js
+backend/static/scripts/firebase-config.local.js
+backend/templates/localhost-test.local.html
 .env.production
 .env.staging
 
