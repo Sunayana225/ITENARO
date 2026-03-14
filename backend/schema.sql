@@ -131,6 +131,31 @@ CREATE TABLE IF NOT EXISTS packing_list_states (
     FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
 );
 
+-- Itinerary collaborators
+CREATE TABLE IF NOT EXISTS itinerary_collaborators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    itinerary_id INTEGER NOT NULL,
+    collaborator_uid TEXT,
+    invited_email TEXT,
+    invited_by_uid TEXT NOT NULL,
+    status TEXT DEFAULT 'accepted',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(itinerary_id, collaborator_uid),
+    UNIQUE(itinerary_id, invited_email),
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
+-- Activity log for itinerary collaboration
+CREATE TABLE IF NOT EXISTS itinerary_activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    itinerary_id INTEGER NOT NULL,
+    actor_uid TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
 -- Insert sample destinations
 INSERT INTO destinations (name, description, category, image_url, location, country, rating) VALUES
 ('Maldives', 'Relax on stunning white beaches and explore coral reefs.', 'beach', '/static/images/maldives.jpg', 'Maldives', 'Maldives', 4.8),

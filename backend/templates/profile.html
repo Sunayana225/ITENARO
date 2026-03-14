@@ -1705,20 +1705,97 @@
                         <h4 style="margin: 0 0 8px 0; color: #333;">📍 ${it.destination}</h4>
                         <p style="color: #888; font-size: 0.88rem; margin: 0 0 4px 0;">📅 ${it.duration || '?'} days · 💰 ${it.budget || 'N/A'} · 🎯 ${it.purpose || ''}</p>
                         <p style="color: #aaa; font-size: 0.8rem; margin: 0 0 12px 0;">Created: ${new Date(it.created_at).toLocaleDateString()}</p>
-                        <a href="/shared/${it.share_token}" target="_blank" style="
-                            display: inline-block;
-                            background: linear-gradient(135deg, #ff7f50, #ff5733);
-                            color: white;
-                            padding: 8px 16px;
-                            border-radius: 8px;
-                            text-decoration: none;
-                            font-size: 0.85rem;
-                            font-weight: 600;
-                        ">🔗 View Shared Link</a>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="/shared/${it.share_token}" target="_blank" style="
+                                display: inline-block;
+                                background: linear-gradient(135deg, #ff7f50, #ff5733);
+                                color: white;
+                                padding: 8px 16px;
+                                border-radius: 8px;
+                                text-decoration: none;
+                                font-size: 0.85rem;
+                                font-weight: 600;
+                            ">🔗 View Shared Link</a>
+                            <button type="button" onclick="inviteCollaborator(${it.id})" style="
+                                border: none;
+                                border-radius: 8px;
+                                background: #2ecc71;
+                                color: white;
+                                padding: 8px 12px;
+                                font-size: 0.82rem;
+                                font-weight: 600;
+                                cursor: pointer;
+                            ">👥 Invite</button>
+                            <button type="button" onclick="showItineraryActivity(${it.id})" style="
+                                border: 1px solid #d8d8d8;
+                                border-radius: 8px;
+                                background: #fff;
+                                color: #555;
+                                padding: 8px 12px;
+                                font-size: 0.82rem;
+                                font-weight: 600;
+                                cursor: pointer;
+                            ">🕒 Activity</button>
+                        </div>
                     </div>
                 `).join('')
             }</div>`;
         }
+
+        window.inviteCollaborator = async function(itineraryId) {
+            if (!currentUser) return;
+
+            const collaboratorUid = prompt('Enter collaborator Firebase UID:');
+            if (!collaboratorUid || !collaboratorUid.trim()) {
+                return;
+            }
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/invite`, {
+                    method: 'POST',
+                    body: JSON.stringify({ collaborator_uid: collaboratorUid.trim() })
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    showMessage('Collaborator invite saved!', 'success');
+                } else {
+                    showMessage(data.error || 'Failed to invite collaborator', 'error');
+                }
+            } catch (err) {
+                console.error('Invite collaborator error:', err);
+                showMessage('Failed to invite collaborator', 'error');
+            }
+        };
+
+        window.showItineraryActivity = async function(itineraryId) {
+            if (!currentUser) return;
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/activity`);
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    showMessage(data.error || 'Failed to load itinerary activity', 'error');
+                    return;
+                }
+
+                if (!Array.isArray(data.activity) || data.activity.length === 0) {
+                    alert('No activity yet for this itinerary.');
+                    return;
+                }
+
+                const preview = data.activity.slice(0, 8).map(event => {
+                    const when = event.created_at ? new Date(event.created_at).toLocaleString() : 'Unknown time';
+                    return `${when} | ${event.actor_uid}: ${event.action}`;
+                }).join('\n');
+
+                alert(`Recent itinerary activity:\n\n${preview}`);
+            } catch (err) {
+                console.error('Load activity error:', err);
+                showMessage('Failed to load itinerary activity', 'error');
+            }
+        };
 
         // Load passport and itineraries when profile loads
         const origLoadProfile = window.onAuthReady;

@@ -915,6 +915,27 @@ def ensure_phase2_tables():
             UNIQUE(firebase_uid, trip_key),
             FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
         );
+        CREATE TABLE IF NOT EXISTS itinerary_collaborators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            itinerary_id INTEGER NOT NULL,
+            collaborator_uid TEXT,
+            invited_email TEXT,
+            invited_by_uid TEXT NOT NULL,
+            status TEXT DEFAULT 'accepted',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(itinerary_id, collaborator_uid),
+            UNIQUE(itinerary_id, invited_email),
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
+        CREATE TABLE IF NOT EXISTS itinerary_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            itinerary_id INTEGER NOT NULL,
+            actor_uid TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
     ''')
     conn.close()
 
@@ -925,6 +946,48 @@ ensure_phase2_tables()
 def generate_share_token():
     """Generate a unique share token."""
     return ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+
+
+def _resolve_itinerary_access(conn, itinerary_id, requester_uid):
+    """Return itinerary row and access flags for owner/collaborator."""
+    itinerary = conn.execute(
+        'SELECT * FROM saved_itineraries WHERE id = ?',
+        (itinerary_id,)
+    ).fetchone()
+
+    if not itinerary:
+        return None, False, False
+
+    is_owner = str(itinerary['firebase_uid'] or '') == str(requester_uid)
+    if is_owner:
+        return itinerary, True, True
+
+    collaborator = conn.execute(
+        '''SELECT id
+           FROM itinerary_collaborators
+           WHERE itinerary_id = ?
+             AND collaborator_uid = ?
+             AND status = 'accepted' ''',
+        (itinerary_id, requester_uid)
+    ).fetchone()
+
+    return itinerary, bool(collaborator), False
+
+
+def _log_itinerary_activity(conn, itinerary_id, actor_uid, action, details=None):
+    """Write an itinerary activity event."""
+    if isinstance(details, (dict, list)):
+        details_text = json.dumps(details)
+    elif details is None:
+        details_text = None
+    else:
+        details_text = str(details)
+
+    conn.execute(
+        '''INSERT INTO itinerary_activity_log (itinerary_id, actor_uid, action, details)
+           VALUES (?, ?, ?, ?)''',
+        (itinerary_id, actor_uid, action, details_text)
+    )
 
 
 @app.route('/api/save-itinerary', methods=['POST'])
@@ -943,7 +1006,7 @@ def save_itinerary():
 
     try:
         conn = get_db_connection()
-        conn.execute(
+        cursor = conn.execute(
             '''INSERT INTO saved_itineraries
                (firebase_uid, share_token, destination, duration, budget, purpose,
                 preferences, itinerary_html, itinerary_data, is_public)
@@ -961,11 +1024,22 @@ def save_itinerary():
                 1 if data.get('is_public', True) else 0
             )
         )
+
+        itinerary_id = cursor.lastrowid
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            auth_user['uid'],
+            'create_itinerary',
+            {'destination': destination}
+        )
+
         conn.commit()
         conn.close()
 
         share_url = f"{request.host_url}shared/{share_token}"
         return jsonify({
+            "itinerary_id": itinerary_id,
             "share_token": share_token,
             "share_url": share_url,
             "message": "Itinerary saved successfully!"
@@ -1047,6 +1121,250 @@ def get_my_itineraries(firebase_uid):
     except Exception as e:
         logging.error(f"Error getting user itineraries: {e}")
         return jsonify({"error": "Internal error"}), 500
+
+
+# ==================== PHASE 2 - COLLABORATIVE ITINERARIES ====================
+
+@app.route('/api/itineraries/<int:itinerary_id>/invite', methods=['POST'])
+@firebase_auth_required
+def invite_itinerary_collaborator(itinerary_id):
+    """Invite a collaborator to a saved itinerary."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    collaborator_uid = str(data.get('collaborator_uid', '')).strip() or None
+    invited_email = str(data.get('invited_email', '')).strip().lower() or None
+
+    if not collaborator_uid and not invited_email:
+        return jsonify({"error": "collaborator_uid or invited_email is required"}), 400
+
+    if collaborator_uid and collaborator_uid == auth_user['uid']:
+        return jsonify({"error": "You are already the owner of this itinerary."}), 400
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access or not is_owner:
+            conn.close()
+            return jsonify({"error": "Only the itinerary owner can invite collaborators."}), 403
+
+        status = 'accepted' if collaborator_uid else 'pending'
+
+        if collaborator_uid:
+            conn.execute(
+                '''INSERT INTO itinerary_collaborators
+                   (itinerary_id, collaborator_uid, invited_email, invited_by_uid, status)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(itinerary_id, collaborator_uid) DO UPDATE SET
+                       invited_by_uid = excluded.invited_by_uid,
+                       invited_email = excluded.invited_email,
+                       status = excluded.status,
+                       created_at = CURRENT_TIMESTAMP''',
+                (itinerary_id, collaborator_uid, invited_email, auth_user['uid'], status)
+            )
+
+        if invited_email:
+            conn.execute(
+                '''INSERT INTO itinerary_collaborators
+                   (itinerary_id, collaborator_uid, invited_email, invited_by_uid, status)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(itinerary_id, invited_email) DO UPDATE SET
+                       invited_by_uid = excluded.invited_by_uid,
+                       collaborator_uid = COALESCE(excluded.collaborator_uid, itinerary_collaborators.collaborator_uid),
+                       status = excluded.status,
+                       created_at = CURRENT_TIMESTAMP''',
+                (itinerary_id, collaborator_uid, invited_email, auth_user['uid'], status)
+            )
+
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            auth_user['uid'],
+            'invite_collaborator',
+            {
+                'collaborator_uid': collaborator_uid,
+                'invited_email': invited_email,
+                'status': status,
+            }
+        )
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            "message": "Collaborator invitation saved.",
+            "itinerary_id": itinerary_id,
+            "collaborator_uid": collaborator_uid,
+            "invited_email": invited_email,
+            "status": status,
+        }), 201
+    except Exception as e:
+        logging.error(f"Error inviting collaborator: {e}")
+        return jsonify({"error": "Failed to invite collaborator"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/collaborators', methods=['GET'])
+@firebase_auth_required
+def get_itinerary_collaborators(itinerary_id):
+    """List itinerary collaborators for owner/collaborators."""
+    auth_user = _get_authenticated_user(optional=False)
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have access to this itinerary."}), 403
+
+        rows = conn.execute(
+            '''SELECT collaborator_uid, invited_email, invited_by_uid, status, created_at
+               FROM itinerary_collaborators
+               WHERE itinerary_id = ?
+               ORDER BY created_at DESC''',
+            (itinerary_id,)
+        ).fetchall()
+        conn.close()
+
+        return jsonify({
+            "itinerary_id": itinerary_id,
+            "owner_uid": itinerary['firebase_uid'],
+            "is_owner": is_owner,
+            "collaborators": [dict(row) for row in rows],
+        })
+    except Exception as e:
+        logging.error(f"Error listing collaborators: {e}")
+        return jsonify({"error": "Failed to load collaborators"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>', methods=['PUT'])
+@firebase_auth_required
+def update_saved_itinerary(itinerary_id):
+    """Update a saved itinerary by owner or accepted collaborator."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    allowed_fields = {
+        'destination',
+        'duration',
+        'budget',
+        'purpose',
+        'preferences',
+        'itinerary_html',
+        'itinerary_data',
+        'is_public',
+    }
+
+    updates = {k: data[k] for k in allowed_fields if k in data}
+    if not updates:
+        return jsonify({"error": "No editable fields provided."}), 400
+
+    if 'destination' in updates:
+        updates['destination'] = str(updates['destination']).strip()
+        if not updates['destination']:
+            return jsonify({"error": "destination cannot be empty"}), 400
+
+    if 'itinerary_html' in updates:
+        updates['itinerary_html'] = str(updates['itinerary_html']).strip()
+        if not updates['itinerary_html']:
+            return jsonify({"error": "itinerary_html cannot be empty"}), 400
+
+    if 'preferences' in updates:
+        if not isinstance(updates['preferences'], list):
+            return jsonify({"error": "preferences must be a list"}), 400
+        updates['preferences'] = json.dumps(updates['preferences'])
+
+    if 'itinerary_data' in updates:
+        if not isinstance(updates['itinerary_data'], dict):
+            return jsonify({"error": "itinerary_data must be an object"}), 400
+        updates['itinerary_data'] = json.dumps(updates['itinerary_data'])
+
+    if 'is_public' in updates:
+        updates['is_public'] = 1 if bool(updates['is_public']) else 0
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have edit access."}), 403
+
+        fields = list(updates.keys())
+        set_clause = ', '.join([f"{field} = ?" for field in fields]) + ', updated_at = CURRENT_TIMESTAMP'
+        values = [updates[field] for field in fields] + [itinerary_id]
+
+        conn.execute(f'UPDATE saved_itineraries SET {set_clause} WHERE id = ?', values)
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            auth_user['uid'],
+            'update_itinerary',
+            {'updated_fields': fields}
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify({"message": "Itinerary updated successfully."})
+    except Exception as e:
+        logging.error(f"Error updating itinerary: {e}")
+        return jsonify({"error": "Failed to update itinerary"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/activity', methods=['GET'])
+@firebase_auth_required
+def get_itinerary_activity(itinerary_id):
+    """Get itinerary activity log for owner/collaborators."""
+    auth_user = _get_authenticated_user(optional=False)
+
+    try:
+        conn = get_db_connection()
+        itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if not has_access:
+            conn.close()
+            return jsonify({"error": "Forbidden: you do not have access to this itinerary."}), 403
+
+        rows = conn.execute(
+            '''SELECT actor_uid, action, details, created_at
+               FROM itinerary_activity_log
+               WHERE itinerary_id = ?
+               ORDER BY created_at DESC
+               LIMIT 100''',
+            (itinerary_id,)
+        ).fetchall()
+        conn.close()
+
+        activity = []
+        for row in rows:
+            entry = dict(row)
+            try:
+                entry['details'] = json.loads(entry['details']) if entry.get('details') else None
+            except (TypeError, json.JSONDecodeError):
+                pass
+            activity.append(entry)
+
+        return jsonify({"itinerary_id": itinerary_id, "activity": activity})
+    except Exception as e:
+        logging.error(f"Error getting itinerary activity: {e}")
+        return jsonify({"error": "Failed to load itinerary activity"}), 500
 
 
 # ==================== PHASE 2 - PACKING LIST SYNC ====================
