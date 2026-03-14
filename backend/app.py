@@ -212,6 +212,11 @@ def _coerce_positive_int(value):
         return None
 
 
+def _normalized_email(value):
+    """Normalize email-like input for case-insensitive matching."""
+    return str(value or '').strip().lower()
+
+
 def _normalize_places(places, fallback_places=None):
     """Normalize place objects and keep only valid entries."""
     normalized = []
@@ -1326,6 +1331,56 @@ def get_my_itineraries(firebase_uid):
         return jsonify({"error": "Internal error"}), 500
 
 
+@app.route('/api/my-shared-itineraries', methods=['GET'])
+@firebase_auth_required
+def get_my_shared_itineraries():
+    """List itineraries shared with the authenticated user by UID or invited email."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            '''SELECT s.id,
+                      s.share_token,
+                      s.destination,
+                      s.duration,
+                      s.budget,
+                      s.purpose,
+                      s.firebase_uid AS owner_uid,
+                      c.status,
+                      c.invited_email,
+                      c.collaborator_uid,
+                      c.created_at AS invited_at
+               FROM itinerary_collaborators c
+               JOIN saved_itineraries s ON s.id = c.itinerary_id
+               WHERE (
+                     c.collaborator_uid = ?
+                  OR (? != '' AND LOWER(COALESCE(c.invited_email, '')) = ?)
+               )
+                 AND c.status IN ('pending', 'accepted')
+               ORDER BY c.created_at DESC''',
+            (requester_uid, requester_email, requester_email)
+        ).fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            item = dict(row)
+            item['can_accept'] = bool(
+                item.get('status') == 'pending'
+                and requester_email
+                and _normalized_email(item.get('invited_email')) == requester_email
+            )
+            result.append(item)
+
+        return jsonify({"itineraries": result})
+    except Exception as e:
+        logging.error(f"Error getting shared itineraries: {e}")
+        return jsonify({"error": "Failed to load shared itineraries"}), 500
+
+
 # ==================== PHASE 2 - COLLABORATIVE ITINERARIES ====================
 
 @app.route('/api/itineraries/<int:itinerary_id>/invite', methods=['POST'])
@@ -1336,13 +1391,20 @@ def invite_itinerary_collaborator(itinerary_id):
     data = request.json or {}
 
     collaborator_uid = str(data.get('collaborator_uid', '')).strip() or None
-    invited_email = str(data.get('invited_email', '')).strip().lower() or None
+    invited_email = _normalized_email(data.get('invited_email')) or None
+    requester_email = _normalized_email(auth_user.get('email'))
 
     if not collaborator_uid and not invited_email:
         return jsonify({"error": "collaborator_uid or invited_email is required"}), 400
 
     if collaborator_uid and collaborator_uid == auth_user['uid']:
         return jsonify({"error": "You are already the owner of this itinerary."}), 400
+
+    if invited_email:
+        if '@' not in invited_email:
+            return jsonify({"error": "invited_email must be a valid email address"}), 400
+        if requester_email and invited_email == requester_email:
+            return jsonify({"error": "You cannot invite yourself."}), 400
 
     try:
         conn = get_db_connection()
@@ -1409,6 +1471,77 @@ def invite_itinerary_collaborator(itinerary_id):
     except Exception as e:
         logging.error(f"Error inviting collaborator: {e}")
         return jsonify({"error": "Failed to invite collaborator"}), 500
+
+
+@app.route('/api/itineraries/<int:itinerary_id>/accept-invite', methods=['POST'])
+@firebase_auth_required
+def accept_itinerary_invite(itinerary_id):
+    """Accept a pending itinerary invite by UID or invited email."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+
+    try:
+        conn = get_db_connection()
+        itinerary = conn.execute(
+            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            (itinerary_id,)
+        ).fetchone()
+
+        if not itinerary:
+            conn.close()
+            return jsonify({"error": "Itinerary not found"}), 404
+
+        if str(itinerary['firebase_uid'] or '') == requester_uid:
+            conn.close()
+            return jsonify({"error": "Owner does not need to accept an invite."}), 400
+
+        invite_row = conn.execute(
+            '''SELECT id, status, invited_email, collaborator_uid
+               FROM itinerary_collaborators
+               WHERE itinerary_id = ?
+                 AND (
+                       collaborator_uid = ?
+                    OR (? != '' AND LOWER(COALESCE(invited_email, '')) = ?)
+                 )
+               ORDER BY created_at DESC
+               LIMIT 1''',
+            (itinerary_id, requester_uid, requester_email, requester_email)
+        ).fetchone()
+
+        if not invite_row:
+            conn.close()
+            return jsonify({"error": "Invite not found for this user."}), 404
+
+        if invite_row['status'] == 'accepted' and str(invite_row['collaborator_uid'] or '') == requester_uid:
+            conn.close()
+            return jsonify({"message": "Invite already accepted."})
+
+        conn.execute(
+            '''UPDATE itinerary_collaborators
+               SET collaborator_uid = ?,
+                   status = 'accepted',
+                   created_at = CURRENT_TIMESTAMP
+               WHERE id = ?''',
+            (requester_uid, invite_row['id'])
+        )
+
+        _log_itinerary_activity(
+            conn,
+            itinerary_id,
+            requester_uid,
+            'accept_invitation',
+            {
+                'invited_email': invite_row['invited_email'],
+            }
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Invitation accepted."})
+    except Exception as e:
+        logging.error(f"Error accepting itinerary invite: {e}")
+        return jsonify({"error": "Failed to accept invitation"}), 500
 
 
 @app.route('/api/itineraries/<int:itinerary_id>/collaborators', methods=['GET'])

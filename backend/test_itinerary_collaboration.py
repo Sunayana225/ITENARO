@@ -150,3 +150,69 @@ def test_outsider_cannot_view_activity(client_with_auth):
 
     assert activity_response.status_code == 403
     assert "forbidden" in activity_response.get_json()["error"].lower()
+
+
+def test_owner_can_invite_by_email_pending(client_with_auth):
+    client, _auth = client_with_auth
+
+    response = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "collab@example.com"},
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["invited_email"] == "collab@example.com"
+    assert body["status"] == "pending"
+
+
+def test_invited_user_can_list_and_accept_pending_invite(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "collab@example.com"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-2"
+    auth["email"] = "collab@example.com"
+
+    shared_response = client.get("/api/my-shared-itineraries")
+    assert shared_response.status_code == 200
+    shared_body = shared_response.get_json()
+    assert len(shared_body["itineraries"]) == 1
+    assert shared_body["itineraries"][0]["status"] == "pending"
+    assert shared_body["itineraries"][0]["can_accept"] is True
+
+    accept_response = client.post("/api/itineraries/1/accept-invite", json={})
+    assert accept_response.status_code == 200
+    assert "accepted" in accept_response.get_json()["message"].lower()
+
+    update_response = client.put(
+        "/api/itineraries/1",
+        json={"budget": "$2100"},
+    )
+    assert update_response.status_code == 200
+
+    conn = sqlite3.connect(app_module.DATABASE)
+    collab_row = conn.execute(
+        "SELECT collaborator_uid, status FROM itinerary_collaborators WHERE itinerary_id = 1"
+    ).fetchone()
+    conn.close()
+
+    assert collab_row is not None
+    assert collab_row[0] == "user-2"
+    assert collab_row[1] == "accepted"
+
+
+def test_outsider_cannot_accept_missing_invite(client_with_auth):
+    client, auth = client_with_auth
+
+    auth["uid"] = "user-9"
+    auth["email"] = "notinvited@example.com"
+
+    response = client.post("/api/itineraries/1/accept-invite", json={})
+
+    assert response.status_code == 404
+    assert "invite" in response.get_json()["error"].lower()

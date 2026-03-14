@@ -872,6 +872,19 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Shared With Me Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">🤝 Shared With Me</div>
+                            </div>
+                            <div id="sharedItinerariesContainer">
+                                <div style="text-align: center; padding: 30px; color: #aaa;">
+                                    <div style="font-size: 48px; margin-bottom: 10px;">📨</div>
+                                    <p>No shared itineraries yet.</p>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div> <!-- End profileContent -->
@@ -1681,6 +1694,21 @@
             }
         }
 
+        async function loadSharedItineraries() {
+            if (!currentUser) return;
+            try {
+                const resp = await authFetch('/api/my-shared-itineraries');
+                const data = await resp.json();
+                if (!resp.ok) {
+                    console.error('Error loading shared itineraries:', data.error);
+                    return;
+                }
+                renderSharedItineraries(data.itineraries || []);
+            } catch (err) {
+                console.error('Error loading shared itineraries:', err);
+            }
+        }
+
         function renderSavedItineraries(itineraries) {
             const container = document.getElementById('savedItinerariesContainer');
             if (!itineraries || itineraries.length === 0) {
@@ -1742,23 +1770,108 @@
             }</div>`;
         }
 
-        window.inviteCollaborator = async function(itineraryId) {
-            if (!currentUser) return;
+        function renderSharedItineraries(itineraries) {
+            const container = document.getElementById('sharedItinerariesContainer');
 
-            const collaboratorUid = prompt('Enter collaborator Firebase UID:');
-            if (!collaboratorUid || !collaboratorUid.trim()) {
+            if (!itineraries || itineraries.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 30px; color: #aaa;">
+                        <div style="font-size: 48px; margin-bottom: 10px;">📨</div>
+                        <p>No shared itineraries yet.</p>
+                    </div>`;
                 return;
             }
 
+            container.innerHTML = `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">${
+                itineraries.map(it => {
+                    const pending = it.status === 'pending';
+                    return `
+                        <div style="
+                            background: #fcfcfc;
+                            border-radius: 12px;
+                            padding: 20px;
+                            border: 1.5px solid ${pending ? '#ffe3b3' : '#e6f7ec'};
+                            box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+                        ">
+                            <h4 style="margin: 0 0 8px 0; color: #333;">📍 ${it.destination}</h4>
+                            <p style="color: #888; font-size: 0.88rem; margin: 0 0 4px 0;">📅 ${it.duration || '?'} days · 💰 ${it.budget || 'N/A'} · 🎯 ${it.purpose || ''}</p>
+                            <p style="color: #777; font-size: 0.82rem; margin: 0 0 6px 0;">Owner: ${it.owner_uid || 'Unknown'}</p>
+                            <p style="margin: 0 0 12px 0; font-size: 0.8rem; color: ${pending ? '#b7791f' : '#2f855a'}; font-weight: 700; text-transform: uppercase;">
+                                ${it.status}
+                            </p>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <a href="/shared/${it.share_token}" target="_blank" style="
+                                    display: inline-block;
+                                    background: linear-gradient(135deg, #ff7f50, #ff5733);
+                                    color: white;
+                                    padding: 8px 14px;
+                                    border-radius: 8px;
+                                    text-decoration: none;
+                                    font-size: 0.82rem;
+                                    font-weight: 600;
+                                ">🔗 Open</a>
+                                ${it.can_accept ? `<button type="button" onclick="acceptItineraryInvite(${it.id})" style="
+                                    border: none;
+                                    border-radius: 8px;
+                                    background: #2ecc71;
+                                    color: white;
+                                    padding: 8px 12px;
+                                    font-size: 0.82rem;
+                                    font-weight: 600;
+                                    cursor: pointer;
+                                ">✅ Accept</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+            }</div>`;
+        }
+
+        window.acceptItineraryInvite = async function(itineraryId) {
+            if (!currentUser) return;
+
             try {
-                const resp = await authFetch(`/api/itineraries/${itineraryId}/invite`, {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/accept-invite`, {
                     method: 'POST',
-                    body: JSON.stringify({ collaborator_uid: collaboratorUid.trim() })
+                    body: JSON.stringify({})
                 });
                 const data = await resp.json();
 
                 if (resp.ok) {
-                    showMessage('Collaborator invite saved!', 'success');
+                    showMessage('Invitation accepted! You can now collaborate on this itinerary.', 'success');
+                    await loadSharedItineraries();
+                } else {
+                    showMessage(data.error || 'Failed to accept invitation', 'error');
+                }
+            } catch (err) {
+                console.error('Accept invite error:', err);
+                showMessage('Failed to accept invitation', 'error');
+            }
+        };
+
+        window.inviteCollaborator = async function(itineraryId) {
+            if (!currentUser) return;
+
+            const collaboratorInput = prompt('Enter collaborator Firebase UID or email:');
+            if (!collaboratorInput || !collaboratorInput.trim()) {
+                return;
+            }
+
+            const value = collaboratorInput.trim();
+            const payload = value.includes('@')
+                ? { invited_email: value.toLowerCase() }
+                : { collaborator_uid: value };
+
+            try {
+                const resp = await authFetch(`/api/itineraries/${itineraryId}/invite`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    const inviteType = payload.invited_email ? 'email invite' : 'collaborator invite';
+                    showMessage(`Collaborator ${inviteType} saved!`, 'success');
                 } else {
                     showMessage(data.error || 'Failed to invite collaborator', 'error');
                 }
@@ -1802,6 +1915,7 @@
         function loadAllProfileData() {
             loadPassport();
             loadSavedItineraries();
+            loadSharedItineraries();
         }
 
         // Hook into auth state - load after user is set
