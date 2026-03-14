@@ -747,8 +747,115 @@ document.addEventListener("DOMContentLoaded", function () {
     // ============================================
     const packingListBtn = document.getElementById("packingListBtn");
     const closePackingBtn = document.getElementById("closePackingBtn");
+    const sharePackingBtn = document.getElementById("sharePackingBtn");
     const packingListPanel = document.getElementById("packingListPanel");
     const packingListContent = document.getElementById("packingListContent");
+    let currentPackingListData = null;
+    let currentPackingCheckedState = {};
+    let packingStateSaveTimer = null;
+
+    function getPackingTripKey() {
+        const destination = (document.getElementById("destination")?.value || "trip").trim().toLowerCase();
+        const duration = (document.getElementById("duration")?.value || "na").trim().toLowerCase();
+        const purpose = (document.getElementById("purpose")?.value || "na").trim().toLowerCase();
+        return `${destination}|${duration}|${purpose}`;
+    }
+
+    function getPackingStorageKey(tripKey) {
+        return `packing_${tripKey}`;
+    }
+
+    async function loadPackingState(tripKey) {
+        const storageKey = getPackingStorageKey(tripKey);
+        const localState = JSON.parse(localStorage.getItem(storageKey) || '{}');
+        const user = getCurrentUser();
+
+        if (!user) {
+            return { checkedState: localState, packingData: null };
+        }
+
+        try {
+            const response = await authJsonFetch(
+                `/api/packing-list-state/${encodeURIComponent(user.uid)}?trip_key=${encodeURIComponent(tripKey)}`,
+                { method: 'GET', forceJsonHeader: false }
+            );
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to load packing state');
+            }
+
+            const serverCheckedState = payload.checked_state && typeof payload.checked_state === 'object'
+                ? payload.checked_state
+                : {};
+            const mergedState = { ...localState, ...serverCheckedState };
+            localStorage.setItem(storageKey, JSON.stringify(mergedState));
+
+            return {
+                checkedState: mergedState,
+                packingData: payload.packing_data && typeof payload.packing_data === 'object' ? payload.packing_data : null,
+            };
+        } catch (error) {
+            console.error('Error loading synced packing state:', error);
+            return { checkedState: localState, packingData: null };
+        }
+    }
+
+    async function savePackingState(tripKey, checkedState, packingData = null) {
+        const storageKey = getPackingStorageKey(tripKey);
+        localStorage.setItem(storageKey, JSON.stringify(checkedState));
+
+        const user = getCurrentUser();
+        if (!user) {
+            return;
+        }
+
+        try {
+            await authJsonFetch('/api/packing-list-state', {
+                method: 'POST',
+                body: JSON.stringify({
+                    trip_key: tripKey,
+                    checked_state: checkedState,
+                    packing_data: packingData,
+                }),
+            });
+        } catch (error) {
+            console.error('Error saving synced packing state:', error);
+        }
+    }
+
+    function schedulePackingStateSave(tripKey) {
+        if (packingStateSaveTimer) {
+            clearTimeout(packingStateSaveTimer);
+        }
+
+        packingStateSaveTimer = setTimeout(() => {
+            savePackingState(tripKey, currentPackingCheckedState, currentPackingListData);
+        }, 250);
+    }
+
+    function buildPackingListShareText(data, checkedState) {
+        const destination = document.getElementById("destination")?.value || 'Your Trip';
+        const lines = [`ITENARO Packing List - ${destination}`, ''];
+
+        (data.categories || []).forEach((category, catIdx) => {
+            lines.push(`${category.icon || '📦'} ${category.name}`);
+            (category.items || []).forEach((item, itemIdx) => {
+                const itemKey = `${catIdx}_${itemIdx}`;
+                const mark = checkedState[itemKey] ? '[x]' : '[ ]';
+                const notePart = item.note ? ` (${item.note})` : '';
+                lines.push(`  ${mark} ${item.item} x${item.quantity || 1}${notePart}`);
+            });
+            lines.push('');
+        });
+
+        if (Array.isArray(data.pro_tips) && data.pro_tips.length > 0) {
+            lines.push('Pro Tips');
+            data.pro_tips.forEach((tip, idx) => lines.push(`  ${idx + 1}. ${tip}`));
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    }
 
     if (packingListBtn) {
         packingListBtn.addEventListener("click", function () {
@@ -783,9 +890,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
                 return response.json();
             })
-            .then(data => {
+            .then(async data => {
                 if (data.packing_list) {
-                    renderPackingList(data.packing_list);
+                    await renderPackingList(data.packing_list);
                 } else {
                     packingListContent.innerHTML = '<p class="packing-placeholder">❌ Could not generate packing list. Please try again.</p>';
                 }
@@ -803,16 +910,61 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    function renderPackingList(data) {
-        const storageKey = `packing_${document.getElementById("destination")?.value || 'trip'}`;
-        const savedState = JSON.parse(localStorage.getItem(storageKey) || '{}');
+    if (sharePackingBtn) {
+        sharePackingBtn.addEventListener("click", async function () {
+            if (!currentPackingListData || !Array.isArray(currentPackingListData.categories)) {
+                alert("Generate a packing list first.");
+                return;
+            }
+
+            const text = buildPackingListShareText(currentPackingListData, currentPackingCheckedState);
+            const destination = document.getElementById("destination")?.value || 'Trip';
+
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: `Packing List - ${destination}`,
+                        text,
+                    });
+                    return;
+                } catch (shareError) {
+                    console.warn('Web Share canceled/unavailable, falling back to download.', shareError);
+                }
+            }
+
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ITENARO_${destination.replace(/\s+/g, '_')}_Packing_List.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+    }
+
+    async function renderPackingList(data) {
+        const tripKey = getPackingTripKey();
+        const { checkedState, packingData } = await loadPackingState(tripKey);
+
+        const resolvedData = data && Array.isArray(data.categories)
+            ? data
+            : (packingData && Array.isArray(packingData.categories) ? packingData : data);
+
+        currentPackingListData = resolvedData;
+        currentPackingCheckedState = checkedState;
+
+        if (!resolvedData || !Array.isArray(resolvedData.categories)) {
+            packingListContent.innerHTML = '<p class="packing-placeholder">❌ Could not render packing list data.</p>';
+            return;
+        }
+
         let totalItems = 0;
         let checkedItems = 0;
 
         let html = '';
 
         // Categories
-        (data.categories || []).forEach((category, catIdx) => {
+        (resolvedData.categories || []).forEach((category, catIdx) => {
             const itemCount = category.items ? category.items.length : 0;
             totalItems += itemCount;
 
@@ -826,7 +978,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             (category.items || []).forEach((item, itemIdx) => {
                 const itemKey = `${catIdx}_${itemIdx}`;
-                const isChecked = savedState[itemKey] || false;
+                const isChecked = currentPackingCheckedState[itemKey] || false;
                 if (isChecked) checkedItems++;
 
                 html += `<div class="packing-item ${isChecked ? 'checked' : ''}" data-key="${itemKey}">
@@ -843,10 +995,10 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         // Pro Tips
-        if (data.pro_tips && data.pro_tips.length > 0) {
+        if (resolvedData.pro_tips && resolvedData.pro_tips.length > 0) {
             html += `<div class="packing-pro-tips">
                 <h4>💡 Pro Tips</h4>
-                <ul>${data.pro_tips.map(tip => `<li>${tip}</li>`).join('')}</ul>
+                <ul>${resolvedData.pro_tips.map(tip => `<li>${tip}</li>`).join('')}</ul>
             </div>`;
         }
 
@@ -864,22 +1016,23 @@ document.addEventListener("DOMContentLoaded", function () {
             checkbox.addEventListener('change', function () {
                 const key = this.dataset.key;
                 const item = this.closest('.packing-item');
-                const savedState = JSON.parse(localStorage.getItem(storageKey) || '{}');
 
                 if (this.checked) {
-                    savedState[key] = true;
+                    currentPackingCheckedState[key] = true;
                     item.classList.add('checked');
                     checkedItems++;
                 } else {
-                    delete savedState[key];
+                    delete currentPackingCheckedState[key];
                     item.classList.remove('checked');
                     checkedItems--;
                 }
 
-                localStorage.setItem(storageKey, JSON.stringify(savedState));
+                schedulePackingStateSave(tripKey);
                 updatePackingProgress(checkedItems, totalItems);
             });
         });
+
+        schedulePackingStateSave(tripKey);
     }
 
     function updatePackingProgress(checked, total) {

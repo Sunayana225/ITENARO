@@ -117,6 +117,20 @@ CREATE TABLE IF NOT EXISTS digital_passport (
     UNIQUE(firebase_uid, country, stamp_type)
 );
 
+-- Saved packing list states for cross-device sync
+CREATE TABLE IF NOT EXISTS packing_list_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    trip_key TEXT NOT NULL,
+    itinerary_id INTEGER,
+    packing_data TEXT,
+    checked_state TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(firebase_uid, trip_key),
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
 -- Insert sample destinations
 INSERT INTO destinations (name, description, category, image_url, location, country, rating) VALUES
 ('Maldives', 'Relax on stunning white beaches and explore coral reefs.', 'beach', '/static/images/maldives.jpg', 'Maldives', 'Maldives', 4.8),
@@ -126,4 +140,4 @@ INSERT INTO destinations (name, description, category, image_url, location, coun
 ('Paris', 'The city of love with iconic landmarks and cuisine.', 'cultural', '/static/images/paris.jpg', 'Paris', 'France', 4.7),
 ('Tokyo', 'Modern metropolis with traditional culture and amazing food.', 'cultural', '/static/images/tokyo.jpg', 'Tokyo', 'Japan', 4.8),
 ('Bali', 'Tropical paradise with beautiful temples and beaches.', 'beach', '/static/images/bali.jpg', 'Bali', 'Indonesia', 4.6),
-('New York', 'The city that never sleeps with endless attractions.', 'urban', '/static/images/newyork.jpg', 'New York', 'USA', 4.5);
+('New York', 'The city that never sleeps with endless attractions.', 'urban', '/static/images/newyork.jpg', 'New York', 'USA', 4.5);

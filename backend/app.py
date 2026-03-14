@@ -903,6 +903,18 @@ def ensure_phase2_tables():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(firebase_uid, country, stamp_type)
         );
+        CREATE TABLE IF NOT EXISTS packing_list_states (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT NOT NULL,
+            trip_key TEXT NOT NULL,
+            itinerary_id INTEGER,
+            packing_data TEXT,
+            checked_state TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(firebase_uid, trip_key),
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
     ''')
     conn.close()
 
@@ -1035,6 +1047,124 @@ def get_my_itineraries(firebase_uid):
     except Exception as e:
         logging.error(f"Error getting user itineraries: {e}")
         return jsonify({"error": "Internal error"}), 500
+
+
+# ==================== PHASE 2 - PACKING LIST SYNC ====================
+
+@app.route('/api/packing-list-state/<firebase_uid>', methods=['GET'])
+@firebase_auth_required
+def get_packing_list_state(firebase_uid):
+    """Get saved packing list data and checklist state for a user trip key."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
+    trip_key = str(request.args.get('trip_key', '')).strip()
+    if not trip_key:
+        return jsonify({"error": "trip_key query parameter is required"}), 400
+
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            '''SELECT packing_data, checked_state, updated_at
+               FROM packing_list_states
+               WHERE firebase_uid = ? AND trip_key = ?''',
+            (firebase_uid, trip_key)
+        ).fetchone()
+        conn.close()
+
+        if not row:
+            return jsonify({
+                "trip_key": trip_key,
+                "packing_data": None,
+                "checked_state": {},
+                "updated_at": None,
+            })
+
+        packing_data = None
+        checked_state = {}
+
+        try:
+            if row['packing_data']:
+                packing_data = json.loads(row['packing_data'])
+        except (TypeError, json.JSONDecodeError):
+            packing_data = None
+
+        try:
+            if row['checked_state']:
+                parsed_state = json.loads(row['checked_state'])
+                if isinstance(parsed_state, dict):
+                    checked_state = parsed_state
+        except (TypeError, json.JSONDecodeError):
+            checked_state = {}
+
+        return jsonify({
+            "trip_key": trip_key,
+            "packing_data": packing_data,
+            "checked_state": checked_state,
+            "updated_at": row['updated_at'],
+        })
+    except Exception as e:
+        logging.error(f"Error getting packing list state: {e}")
+        return jsonify({"error": "Internal error"}), 500
+
+
+@app.route('/api/packing-list-state', methods=['POST'])
+@firebase_auth_required
+def save_packing_list_state():
+    """Save packing list data and checklist state for cross-device sync."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    trip_key = str(data.get('trip_key', '')).strip()
+    checked_state = data.get('checked_state', {})
+    packing_data = data.get('packing_data')
+    itinerary_id = data.get('itinerary_id')
+
+    if not trip_key:
+        return jsonify({"error": "trip_key is required"}), 400
+
+    if not isinstance(checked_state, dict):
+        return jsonify({"error": "checked_state must be an object"}), 400
+
+    if packing_data is not None and not isinstance(packing_data, dict):
+        return jsonify({"error": "packing_data must be an object when provided"}), 400
+
+    try:
+        conn = get_db_connection()
+
+        if itinerary_id:
+            itinerary = conn.execute(
+                'SELECT id FROM saved_itineraries WHERE id = ? AND firebase_uid = ?',
+                (itinerary_id, auth_user['uid'])
+            ).fetchone()
+            if not itinerary:
+                conn.close()
+                return jsonify({"error": "Forbidden: itinerary ownership mismatch."}), 403
+
+        conn.execute(
+            '''INSERT INTO packing_list_states (firebase_uid, trip_key, itinerary_id, packing_data, checked_state)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(firebase_uid, trip_key) DO UPDATE SET
+                   itinerary_id = COALESCE(excluded.itinerary_id, packing_list_states.itinerary_id),
+                   packing_data = COALESCE(excluded.packing_data, packing_list_states.packing_data),
+                   checked_state = excluded.checked_state,
+                   updated_at = CURRENT_TIMESTAMP''',
+            (
+                auth_user['uid'],
+                trip_key,
+                itinerary_id,
+                json.dumps(packing_data) if packing_data is not None else None,
+                json.dumps(checked_state),
+            )
+        )
+
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Packing list state saved."})
+    except Exception as e:
+        logging.error(f"Error saving packing list state: {e}")
+        return jsonify({"error": "Failed to save packing list state"}), 500
 
 
 # ==================== PHASE 2 - BUDGET TRACKER ====================
