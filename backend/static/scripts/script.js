@@ -25,6 +25,9 @@ document.addEventListener("DOMContentLoaded", function () {
     let presenceHeartbeatTimer = null;
     let latestSyncConflict = null;
     let latestJournal = null;
+    let journalAutosaveTimer = null;
+    let journalMediaUrls = [];
+    let journalVersionHistory = [];
     let currentDayToReplan = null;
     let currentEvents = [];
     let itineraryMap = null; // Leaflet map instance
@@ -57,6 +60,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const journalContentInput = document.getElementById("journalContent");
     const journalHighlights = document.getElementById("journalHighlights");
     const journalStatus = document.getElementById("journalStatus");
+    const journalAutosaveInfo = document.getElementById("journalAutosaveInfo");
+    const journalMediaList = document.getElementById("journalMediaList");
+    const journalHistoryList = document.getElementById("journalHistoryList");
+    const loadJournalHistoryBtn = document.getElementById("loadJournalHistoryBtn");
+    const uploadJournalImageBtn = document.getElementById("uploadJournalImageBtn");
+    const journalImageInput = document.getElementById("journalImageInput");
 
     function updateSyncIndicator(label = "", timestamp = null) {
         if (!syncIndicator) return;
@@ -711,6 +720,267 @@ document.addEventListener("DOMContentLoaded", function () {
         return destination ? `${destination}, trip-journal, ai-recap` : 'trip-journal, ai-recap';
     }
 
+    function getJournalDraftKey() {
+        if (lastSavedItineraryId) {
+            return `itinerary:${lastSavedItineraryId}`;
+        }
+
+        const destination = (document.getElementById('destination')?.value || '').trim().toLowerCase();
+        if (!destination) {
+            return 'destination:general';
+        }
+
+        return `destination:${destination.split(/\s+/).filter(Boolean).join('-')}`;
+    }
+
+    function showJournalAutosaveInfo(message, tone = 'info') {
+        if (!journalAutosaveInfo) return;
+        journalAutosaveInfo.textContent = message;
+        journalAutosaveInfo.style.display = 'block';
+        journalAutosaveInfo.style.background = tone === 'error' ? '#fff1f2' : '#eff6ff';
+        journalAutosaveInfo.style.borderColor = tone === 'error' ? '#fecdd3' : '#bfdbfe';
+        journalAutosaveInfo.style.color = tone === 'error' ? '#9f1239' : '#1e3a8a';
+    }
+
+    function renderJournalMediaList() {
+        if (!journalMediaList) return;
+        if (!Array.isArray(journalMediaUrls) || !journalMediaUrls.length) {
+            journalMediaList.style.display = 'none';
+            journalMediaList.innerHTML = '';
+            return;
+        }
+
+        journalMediaList.innerHTML = journalMediaUrls.map((url, idx) => `
+            <span class="journal-media-chip">📷 Image ${idx + 1}</span>
+            <a class="journal-media-chip" href="${url}" target="_blank" rel="noopener noreferrer">Open</a>
+        `).join('');
+        journalMediaList.style.display = 'flex';
+    }
+
+    function renderJournalVersionHistory() {
+        if (!journalHistoryList) return;
+        if (!Array.isArray(journalVersionHistory) || !journalVersionHistory.length) {
+            journalHistoryList.style.display = 'none';
+            journalHistoryList.innerHTML = '';
+            return;
+        }
+
+        journalHistoryList.innerHTML = journalVersionHistory.map((version, idx) => {
+            const timestamp = version.created_at ? new Date(version.created_at).toLocaleString() : 'Unknown time';
+            return `
+                <div class="journal-history-item">
+                    <span>Version ${journalVersionHistory.length - idx} · ${timestamp}</span>
+                    <button type="button" data-version-index="${idx}" class="restore-journal-version-btn">Restore</button>
+                </div>
+            `;
+        }).join('');
+        journalHistoryList.style.display = 'block';
+
+        journalHistoryList.querySelectorAll('.restore-journal-version-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const index = Number(this.dataset.versionIndex || -1);
+                if (index < 0 || index >= journalVersionHistory.length) return;
+                restoreJournalVersion(index);
+            });
+        });
+    }
+
+    function restoreJournalVersion(index) {
+        const version = journalVersionHistory[index];
+        if (!version) return;
+
+        if (journalTitleInput) {
+            journalTitleInput.value = String(version.title || '').trim();
+        }
+        if (journalContentInput) {
+            journalContentInput.value = String(version.content || '').trim();
+        }
+        if (journalTagsInput) {
+            const tags = Array.isArray(version.tags) ? version.tags.join(', ') : '';
+            journalTagsInput.value = tags;
+        }
+        journalMediaUrls = Array.isArray(version.media_urls) ? version.media_urls : [];
+        renderJournalMediaList();
+        showJournalAutosaveInfo('Version restored locally. Saving draft...');
+        scheduleJournalAutosave();
+    }
+
+    async function saveJournalDraft() {
+        const user = getCurrentUser();
+        if (!user) {
+            return;
+        }
+
+        const title = (journalTitleInput?.value || '').trim();
+        const content = (journalContentInput?.value || '').trim();
+        const tags = (journalTagsInput?.value || '')
+            .split(',')
+            .map(tag => tag.trim())
+            .filter(Boolean);
+
+        if (!title && !content && !tags.length && !journalMediaUrls.length) {
+            return;
+        }
+
+        const payload = {
+            draft_key: getJournalDraftKey(),
+            itinerary_id: lastSavedItineraryId || undefined,
+            destination: (document.getElementById('destination')?.value || '').trim(),
+            title,
+            content,
+            tags,
+            media_urls: journalMediaUrls,
+        };
+
+        try {
+            const response = await authJsonFetch('/api/journal-drafts', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            const body = await response.json();
+
+            if (!response.ok) {
+                throw new Error(body.error || 'Failed to save draft');
+            }
+
+            showJournalAutosaveInfo('Draft autosaved.');
+            if (body.draft?.updated_at) {
+                updateSyncIndicator('Journal draft', body.draft.updated_at);
+            }
+        } catch (error) {
+            console.error('Journal autosave error:', error);
+            showJournalAutosaveInfo('Autosave failed. Will retry on next edit.', 'error');
+        }
+    }
+
+    function scheduleJournalAutosave() {
+        if (journalAutosaveTimer) {
+            clearTimeout(journalAutosaveTimer);
+        }
+
+        journalAutosaveTimer = setTimeout(() => {
+            saveJournalDraft();
+        }, 1200);
+    }
+
+    async function loadLatestJournalDraft() {
+        const user = getCurrentUser();
+        if (!user) {
+            return;
+        }
+
+        const params = new URLSearchParams();
+        params.set('draft_key', getJournalDraftKey());
+        if (lastSavedItineraryId) {
+            params.set('itinerary_id', String(lastSavedItineraryId));
+        }
+
+        try {
+            const response = await authJsonFetch(`/api/journal-drafts/latest?${params.toString()}`, {
+                method: 'GET',
+                forceJsonHeader: false,
+            });
+            const body = await response.json();
+            if (!response.ok) {
+                throw new Error(body.error || 'Failed to load draft');
+            }
+
+            const draft = body.draft;
+            if (!draft) {
+                return;
+            }
+
+            if (journalTitleInput && !journalTitleInput.value.trim()) {
+                journalTitleInput.value = String(draft.title || '').trim();
+            }
+            if (journalContentInput && !journalContentInput.value.trim()) {
+                journalContentInput.value = String(draft.content || '').trim();
+            }
+            if (journalTagsInput && !journalTagsInput.value.trim()) {
+                const tags = Array.isArray(draft.tags) ? draft.tags.join(', ') : '';
+                journalTagsInput.value = tags;
+            }
+
+            journalMediaUrls = Array.isArray(draft.media_urls) ? draft.media_urls : [];
+            renderJournalMediaList();
+            showJournalAutosaveInfo('Loaded your latest journal draft.');
+        } catch (error) {
+            console.error('Load journal draft error:', error);
+        }
+    }
+
+    async function loadJournalHistory() {
+        const user = getCurrentUser();
+        if (!user) {
+            showJournalStatus('Log in to view journal version history.', 'warning');
+            return;
+        }
+
+        const params = new URLSearchParams();
+        params.set('draft_key', getJournalDraftKey());
+        params.set('limit', '12');
+        if (lastSavedItineraryId) {
+            params.set('itinerary_id', String(lastSavedItineraryId));
+        }
+
+        try {
+            const response = await authJsonFetch(`/api/journal-drafts/history?${params.toString()}`, {
+                method: 'GET',
+                forceJsonHeader: false,
+            });
+            const body = await response.json();
+            if (!response.ok) {
+                throw new Error(body.error || 'Failed to load journal history');
+            }
+
+            journalVersionHistory = Array.isArray(body.versions) ? body.versions : [];
+            renderJournalVersionHistory();
+            showJournalAutosaveInfo(`Loaded ${journalVersionHistory.length} historical versions.`);
+        } catch (error) {
+            console.error('Load journal history error:', error);
+            showJournalStatus(error.message || 'Failed to load version history.', 'error');
+        }
+    }
+
+    async function uploadJournalImageFile(file) {
+        const user = getCurrentUser();
+        if (!user) {
+            showJournalStatus('Log in to upload journal media.', 'warning');
+            return;
+        }
+
+        if (!file) {
+            return;
+        }
+
+        try {
+            const headers = await getAuthHeaders(false);
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const response = await fetch('/api/journal-media', {
+                method: 'POST',
+                headers,
+                body: formData,
+            });
+
+            const body = await response.json();
+            if (!response.ok) {
+                throw new Error(body.error || 'Failed to upload image');
+            }
+
+            if (body.media_url) {
+                journalMediaUrls = [body.media_url, ...journalMediaUrls].slice(0, 12);
+                renderJournalMediaList();
+                showJournalStatus('Image uploaded and attached to this draft.', 'success');
+                scheduleJournalAutosave();
+            }
+        } catch (error) {
+            console.error('Journal media upload error:', error);
+            showJournalStatus(error.message || 'Failed to upload image.', 'error');
+        }
+    }
+
     function clearJournalStatus() {
         if (!journalStatus) return;
         journalStatus.style.display = 'none';
@@ -773,6 +1043,12 @@ document.addEventListener("DOMContentLoaded", function () {
         if (journalTagsInput && !journalTagsInput.value.trim()) {
             journalTagsInput.value = getJournalDefaultTags();
         }
+
+        if (journalHistoryList) {
+            journalHistoryList.style.display = 'none';
+        }
+        renderJournalMediaList();
+        loadLatestJournalDraft();
     }
 
     function closeJournalPanel() {
@@ -840,6 +1116,8 @@ document.addEventListener("DOMContentLoaded", function () {
             } else {
                 showJournalStatus('Recap ready. Edit if needed, then publish to blog.', 'success');
             }
+
+            scheduleJournalAutosave();
         } catch (error) {
             showJournalStatus(error.message || 'Failed to generate trip journal recap.', 'error');
         } finally {
@@ -884,7 +1162,12 @@ document.addEventListener("DOMContentLoaded", function () {
                 location: destination,
                 category: 'travel-journal',
                 tags,
+                media_urls: journalMediaUrls,
             };
+
+            if (Array.isArray(journalMediaUrls) && journalMediaUrls.length > 0) {
+                payload.image = journalMediaUrls[0];
+            }
 
             if (lastSavedItineraryId) {
                 payload.itinerary_id = lastSavedItineraryId;
@@ -939,6 +1222,29 @@ document.addEventListener("DOMContentLoaded", function () {
     if (publishJournalBtn) {
         publishJournalBtn.addEventListener('click', publishTripJournalToBlog);
     }
+
+    if (loadJournalHistoryBtn) {
+        loadJournalHistoryBtn.addEventListener('click', loadJournalHistory);
+    }
+
+    if (uploadJournalImageBtn && journalImageInput) {
+        uploadJournalImageBtn.addEventListener('click', function () {
+            journalImageInput.click();
+        });
+
+        journalImageInput.addEventListener('change', function (event) {
+            const file = event.target.files && event.target.files[0];
+            if (file) {
+                uploadJournalImageFile(file);
+            }
+            journalImageInput.value = '';
+        });
+    }
+
+    [journalTitleInput, journalTagsInput, journalContentInput].forEach(field => {
+        if (!field) return;
+        field.addEventListener('input', scheduleJournalAutosave);
+    });
 
     // ============================================
     // GENERATE ITINERARY (Updated with Map + Data)
@@ -995,6 +1301,8 @@ document.addEventListener("DOMContentLoaded", function () {
                     lastSavedItineraryId = null;
                     currentItineraryRevision = 1;
                     latestJournal = null;
+                    journalMediaUrls = [];
+                    journalVersionHistory = [];
                     hideSyncConflictBanner();
                     renderPresenceStrip([]);
                     if (presenceHeartbeatTimer) {
@@ -1014,6 +1322,14 @@ document.addEventListener("DOMContentLoaded", function () {
                     if (journalTagsInput) {
                         journalTagsInput.value = getJournalDefaultTags();
                     }
+                    if (journalAutosaveInfo) {
+                        journalAutosaveInfo.style.display = 'none';
+                    }
+                    if (journalHistoryList) {
+                        journalHistoryList.style.display = 'none';
+                        journalHistoryList.innerHTML = '';
+                    }
+                    renderJournalMediaList();
                     renderJournalHighlights([]);
                     clearJournalStatus();
                 }

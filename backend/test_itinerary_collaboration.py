@@ -68,6 +68,18 @@ def _create_tables(db_path):
             last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(itinerary_id, firebase_uid)
         );
+        CREATE TABLE IF NOT EXISTS user_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient_uid TEXT,
+            recipient_email TEXT,
+            actor_uid TEXT,
+            itinerary_id INTEGER,
+            notification_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            metadata TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         '''
     )
     conn.commit()
@@ -379,3 +391,86 @@ def test_outsider_cannot_read_presence(client_with_auth):
 
     response = client.get("/api/itineraries/1/presence")
     assert response.status_code == 403
+
+
+def test_notifications_inbox_mark_read_flow(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"collaborator_uid": "user-2"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-2"
+    auth["email"] = "user2@example.com"
+
+    inbox_response = client.get("/api/notifications")
+    assert inbox_response.status_code == 200
+    inbox = inbox_response.get_json()
+    assert inbox["unread_count"] >= 1
+
+    invite_notification = next(
+        (item for item in inbox["notifications"] if item["notification_type"] == "itinerary_invite"),
+        None,
+    )
+    assert invite_notification is not None
+    assert invite_notification["is_read"] is False
+
+    mark_read_response = client.post(
+        f"/api/notifications/{invite_notification['id']}/read",
+        json={},
+    )
+    assert mark_read_response.status_code == 200
+
+    unread_response = client.get("/api/notifications?unread_only=true")
+    assert unread_response.status_code == 200
+    unread_ids = {item["id"] for item in unread_response.get_json()["notifications"]}
+    assert invite_notification["id"] not in unread_ids
+
+
+def test_email_recipient_notifications_mark_all_read(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "collab@example.com"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-9"
+    auth["email"] = "collab@example.com"
+
+    inbox_response = client.get("/api/notifications")
+    assert inbox_response.status_code == 200
+    inbox = inbox_response.get_json()
+    assert any(item["notification_type"] == "itinerary_invite" for item in inbox["notifications"])
+
+    mark_all_response = client.post("/api/notifications/read-all", json={})
+    assert mark_all_response.status_code == 200
+
+    unread_response = client.get("/api/notifications?unread_only=true")
+    assert unread_response.status_code == 200
+    assert unread_response.get_json()["notifications"] == []
+
+
+def test_owner_receives_notification_when_invite_accepted(client_with_auth):
+    client, auth = client_with_auth
+
+    invite_response = client.post(
+        "/api/itineraries/1/invite",
+        json={"invited_email": "accept@example.com"},
+    )
+    assert invite_response.status_code == 201
+
+    auth["uid"] = "user-2"
+    auth["email"] = "accept@example.com"
+    accept_response = client.post("/api/itineraries/1/accept-invite", json={})
+    assert accept_response.status_code == 200
+
+    auth["uid"] = "user-1"
+    auth["email"] = "user1@example.com"
+    owner_inbox = client.get("/api/notifications")
+    assert owner_inbox.status_code == 200
+    owner_notifications = owner_inbox.get_json()["notifications"]
+    assert any(item["notification_type"] == "invite_accepted" for item in owner_notifications)

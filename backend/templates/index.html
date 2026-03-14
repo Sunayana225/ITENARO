@@ -324,12 +324,18 @@
                 </div>
                 <button type="button" id="generateJournalBtn" class="export-btn export-packing">Generate Recap</button>
                 <button type="button" id="publishJournalBtn" class="export-btn export-share">Publish to Blog</button>
+                <button type="button" id="loadJournalHistoryBtn" class="export-btn export-calendar">Version History</button>
+                <button type="button" id="uploadJournalImageBtn" class="export-btn export-pdf">Add Image</button>
+                <input type="file" id="journalImageInput" accept="image/*" style="display:none;">
             </div>
+            <div id="journalAutosaveInfo" class="journal-autosave-info" style="display: none;"></div>
             <div class="journal-form-grid">
                 <input type="text" id="journalTitle" placeholder="Journal title">
                 <input type="text" id="journalTags" placeholder="Tags (comma separated)">
             </div>
             <textarea id="journalContent" class="journal-content-input" rows="8" placeholder="Your trip recap will appear here."></textarea>
+            <div id="journalMediaList" class="journal-media-list" style="display: none;"></div>
+            <div id="journalHistoryList" class="journal-history-list" style="display: none;"></div>
             <div id="journalHighlights" class="journal-highlights" style="display: none;"></div>
             <div id="journalStatus" class="journal-status" style="display: none;"></div>
         </div>

@@ -2863,6 +2863,66 @@ h2 {
     border-color: #0f766e;
 }
 
+.journal-autosave-info {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: #1e3a8a;
+    font-size: 0.82rem;
+}
+
+.journal-media-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.journal-media-chip {
+    border-radius: 999px;
+    border: 1px solid #d9e6f7;
+    background: #f8fbff;
+    color: #2d5b86;
+    font-size: 0.8rem;
+    padding: 6px 10px;
+}
+
+.journal-history-list {
+    margin-bottom: 10px;
+    border: 1px solid #e9edf3;
+    background: #fbfdff;
+    border-radius: 12px;
+    padding: 10px;
+    max-height: 190px;
+    overflow-y: auto;
+}
+
+.journal-history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px dashed #e3e8ef;
+    padding: 7px 0;
+}
+
+.journal-history-item:last-child {
+    border-bottom: none;
+}
+
+.journal-history-item button {
+    border: none;
+    background: #e2f0ff;
+    color: #1d4f91;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px 8px;
+}
+
 .journal-highlights {
     background: #f0fdfa;
     border: 1.5px solid #99f6e4;

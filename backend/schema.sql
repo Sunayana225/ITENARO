@@ -171,6 +171,53 @@ CREATE TABLE IF NOT EXISTS itinerary_presence (
     FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
 );
 
+-- Trip journal autosave drafts
+CREATE TABLE IF NOT EXISTS trip_journal_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firebase_uid TEXT NOT NULL,
+    itinerary_id INTEGER,
+    draft_key TEXT NOT NULL,
+    destination TEXT,
+    title TEXT,
+    content TEXT,
+    tags TEXT,
+    media_urls TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(firebase_uid, draft_key),
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
+-- Version history for journal drafts
+CREATE TABLE IF NOT EXISTS trip_journal_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    draft_id INTEGER NOT NULL,
+    firebase_uid TEXT NOT NULL,
+    itinerary_id INTEGER,
+    title TEXT,
+    content TEXT,
+    tags TEXT,
+    media_urls TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (draft_id) REFERENCES trip_journal_drafts (id),
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
+-- User notifications inbox (invites, collaboration changes, journal updates)
+CREATE TABLE IF NOT EXISTS user_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recipient_uid TEXT,
+    recipient_email TEXT,
+    actor_uid TEXT,
+    itinerary_id INTEGER,
+    notification_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+);
+
 -- Insert sample destinations
 INSERT INTO destinations (name, description, category, image_url, location, country, rating) VALUES
 ('Maldives', 'Relax on stunning white beaches and explore coral reefs.', 'beach', '/static/images/maldives.jpg', 'Maldives', 'Maldives', 4.8),

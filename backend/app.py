@@ -252,6 +252,41 @@ def _serialize_saved_itinerary_row(row):
     return payload
 
 
+def _normalize_string_list(value, max_items=20):
+    """Normalize tags/media payloads from list or comma-separated string."""
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+    elif value is None:
+        items = []
+    else:
+        items = [part.strip() for part in str(value).split(',') if part.strip()]
+
+    if not items:
+        return []
+
+    unique = []
+    seen = set()
+    for item in items:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+        if len(unique) >= max_items:
+            break
+    return unique
+
+
+def _build_journal_draft_key(itinerary_id=None, destination=''):
+    if itinerary_id:
+        return f"itinerary:{itinerary_id}"
+
+    normalized_destination = '-'.join(
+        part for part in str(destination or '').lower().strip().split() if part
+    )
+    return f"destination:{normalized_destination or 'general'}"
+
+
 def _normalize_places(places, fallback_places=None):
     """Normalize place objects and keep only valid entries."""
     normalized = []
@@ -990,6 +1025,47 @@ def ensure_phase2_tables():
             UNIQUE(itinerary_id, firebase_uid),
             FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
         );
+        CREATE TABLE IF NOT EXISTS trip_journal_drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT NOT NULL,
+            itinerary_id INTEGER,
+            draft_key TEXT NOT NULL,
+            destination TEXT,
+            title TEXT,
+            content TEXT,
+            tags TEXT,
+            media_urls TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(firebase_uid, draft_key),
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
+        CREATE TABLE IF NOT EXISTS trip_journal_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_id INTEGER NOT NULL,
+            firebase_uid TEXT NOT NULL,
+            itinerary_id INTEGER,
+            title TEXT,
+            content TEXT,
+            tags TEXT,
+            media_urls TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (draft_id) REFERENCES trip_journal_drafts (id),
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
+        CREATE TABLE IF NOT EXISTS user_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient_uid TEXT,
+            recipient_email TEXT,
+            actor_uid TEXT,
+            itinerary_id INTEGER,
+            notification_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            metadata TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (itinerary_id) REFERENCES saved_itineraries (id)
+        );
     ''')
 
     # Lightweight migrations for sync/presence features.
@@ -1002,6 +1078,22 @@ def ensure_phase2_tables():
     conn.execute(
         '''CREATE INDEX IF NOT EXISTS idx_itinerary_presence_recent
            ON itinerary_presence (itinerary_id, last_seen)'''
+    )
+    conn.execute(
+        '''CREATE INDEX IF NOT EXISTS idx_journal_drafts_owner
+           ON trip_journal_drafts (firebase_uid, updated_at DESC)'''
+    )
+    conn.execute(
+        '''CREATE INDEX IF NOT EXISTS idx_journal_versions_draft
+           ON trip_journal_versions (draft_id, created_at DESC)'''
+    )
+    conn.execute(
+        '''CREATE INDEX IF NOT EXISTS idx_notifications_recipient_uid
+           ON user_notifications (recipient_uid, is_read, created_at DESC)'''
+    )
+    conn.execute(
+        '''CREATE INDEX IF NOT EXISTS idx_notifications_recipient_email
+           ON user_notifications (recipient_email, is_read, created_at DESC)'''
     )
 
     conn.commit()
@@ -1055,6 +1147,51 @@ def _log_itinerary_activity(conn, itinerary_id, actor_uid, action, details=None)
         '''INSERT INTO itinerary_activity_log (itinerary_id, actor_uid, action, details)
            VALUES (?, ?, ?, ?)''',
         (itinerary_id, actor_uid, action, details_text)
+    )
+
+
+def _create_user_notification(
+    conn,
+    *,
+    recipient_uid=None,
+    recipient_email=None,
+    actor_uid=None,
+    itinerary_id=None,
+    notification_type='info',
+    message='',
+    metadata=None,
+):
+    if not message:
+        return
+
+    normalized_uid = str(recipient_uid or '').strip() or None
+    normalized_email = _normalized_email(recipient_email)
+    if normalized_email == '':
+        normalized_email = None
+
+    if not normalized_uid and not normalized_email:
+        return
+
+    if isinstance(metadata, (dict, list)):
+        metadata_text = json.dumps(metadata)
+    elif metadata is None:
+        metadata_text = None
+    else:
+        metadata_text = str(metadata)
+
+    conn.execute(
+        '''INSERT INTO user_notifications
+           (recipient_uid, recipient_email, actor_uid, itinerary_id, notification_type, message, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        (
+            normalized_uid,
+            normalized_email,
+            str(actor_uid or '').strip() or None,
+            itinerary_id,
+            str(notification_type or 'info').strip() or 'info',
+            str(message).strip(),
+            metadata_text,
+        )
     )
 
 
@@ -1792,6 +1929,119 @@ def get_my_shared_itineraries():
         return jsonify({"error": "Failed to load shared itineraries"}), 500
 
 
+@app.route('/api/notifications', methods=['GET'])
+@firebase_auth_required
+def get_my_notifications():
+    """Fetch notification inbox for the authenticated user (uid + email targets)."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+    unread_only = str(request.args.get('unread_only', '')).strip().lower() in {'1', 'true', 'yes'}
+    limit = _coerce_positive_int(request.args.get('limit')) or 40
+    limit = max(1, min(limit, 100))
+
+    try:
+        conn = get_db_connection()
+        unread_clause = ' AND is_read = 0' if unread_only else ''
+        rows = conn.execute(
+            f'''SELECT id, recipient_uid, recipient_email, actor_uid, itinerary_id,
+                       notification_type, message, metadata, is_read, created_at
+                FROM user_notifications
+                WHERE (
+                      (recipient_uid IS NOT NULL AND recipient_uid = ?)
+                   OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
+                )
+                {unread_clause}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?''',
+            (requester_uid, requester_email, requester_email, limit)
+        ).fetchall()
+        conn.close()
+
+        notifications = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['metadata'] = json.loads(item['metadata']) if item.get('metadata') else None
+            except (TypeError, json.JSONDecodeError):
+                pass
+            item['is_read'] = bool(item.get('is_read'))
+            notifications.append(item)
+
+        return jsonify({
+            'notifications': notifications,
+            'unread_count': sum(1 for item in notifications if not item.get('is_read')),
+        })
+    except Exception as e:
+        logging.error(f"Error loading notifications: {e}")
+        return jsonify({'error': 'Failed to load notifications'}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['POST'])
+@firebase_auth_required
+def mark_notification_read(notification_id):
+    """Mark a single inbox notification as read for current user."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            '''SELECT id
+               FROM user_notifications
+               WHERE id = ?
+                 AND (
+                      (recipient_uid IS NOT NULL AND recipient_uid = ?)
+                   OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
+                 )
+               LIMIT 1''',
+            (notification_id, requester_uid, requester_email, requester_email)
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return jsonify({'error': 'Notification not found'}), 404
+
+        conn.execute(
+            'UPDATE user_notifications SET is_read = 1 WHERE id = ?',
+            (notification_id,)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Notification marked as read.'})
+    except Exception as e:
+        logging.error(f"Error marking notification read: {e}")
+        return jsonify({'error': 'Failed to mark notification as read'}), 500
+
+
+@app.route('/api/notifications/read-all', methods=['POST'])
+@firebase_auth_required
+def mark_all_notifications_read():
+    """Mark all notifications as read for current user inbox."""
+    auth_user = _get_authenticated_user(optional=False)
+    requester_uid = str(auth_user.get('uid') or '').strip()
+    requester_email = _normalized_email(auth_user.get('email'))
+
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            '''UPDATE user_notifications
+               SET is_read = 1
+               WHERE (
+                     (recipient_uid IS NOT NULL AND recipient_uid = ?)
+                  OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
+               )''',
+            (requester_uid, requester_email, requester_email)
+        )
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'All notifications marked as read.'})
+    except Exception as e:
+        logging.error(f"Error marking all notifications read: {e}")
+        return jsonify({'error': 'Failed to mark notifications as read'}), 500
+
+
 # ==================== PHASE 2 - COLLABORATIVE ITINERARIES ====================
 
 @app.route('/api/itineraries/<int:itinerary_id>/invite', methods=['POST'])
@@ -1869,6 +2119,25 @@ def invite_itinerary_collaborator(itinerary_id):
             }
         )
 
+        _create_user_notification(
+            conn,
+            recipient_uid=collaborator_uid,
+            recipient_email=invited_email,
+            actor_uid=auth_user['uid'],
+            itinerary_id=itinerary_id,
+            notification_type='itinerary_invite',
+            message=(
+                f"You were {'added to' if status == 'accepted' else 'invited to'} "
+                f"the itinerary for {str(itinerary['destination'] or 'this trip')}."
+            ),
+            metadata={
+                'status': status,
+                'destination': itinerary['destination'],
+                'collaborator_uid': collaborator_uid,
+                'invited_email': invited_email,
+            }
+        )
+
         conn.commit()
         conn.close()
 
@@ -1895,7 +2164,7 @@ def accept_itinerary_invite(itinerary_id):
     try:
         conn = get_db_connection()
         itinerary = conn.execute(
-            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            'SELECT id, firebase_uid, destination FROM saved_itineraries WHERE id = ?',
             (itinerary_id,)
         ).fetchone()
 
@@ -1947,6 +2216,16 @@ def accept_itinerary_invite(itinerary_id):
             }
         )
 
+        _create_user_notification(
+            conn,
+            recipient_uid=itinerary['firebase_uid'],
+            actor_uid=requester_uid,
+            itinerary_id=itinerary_id,
+            notification_type='invite_accepted',
+            message=f"A collaborator accepted your invite for {str(itinerary['destination'] or 'your itinerary')}.",
+            metadata={'invited_email': invite_row['invited_email']}
+        )
+
         conn.commit()
         conn.close()
         return jsonify({"message": "Invitation accepted."})
@@ -1966,7 +2245,7 @@ def decline_itinerary_invite(itinerary_id):
     try:
         conn = get_db_connection()
         itinerary = conn.execute(
-            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            'SELECT id, firebase_uid, destination FROM saved_itineraries WHERE id = ?',
             (itinerary_id,)
         ).fetchone()
 
@@ -2012,6 +2291,16 @@ def decline_itinerary_invite(itinerary_id):
             {'invited_email': invite_row['invited_email']}
         )
 
+        _create_user_notification(
+            conn,
+            recipient_uid=itinerary['firebase_uid'],
+            actor_uid=requester_uid,
+            itinerary_id=itinerary_id,
+            notification_type='invite_declined',
+            message=f"An invite was declined for {str(itinerary['destination'] or 'your itinerary')}.",
+            metadata={'invited_email': invite_row['invited_email']}
+        )
+
         conn.commit()
         conn.close()
         return jsonify({"message": "Invitation declined."})
@@ -2030,7 +2319,7 @@ def leave_itinerary_collaboration(itinerary_id):
     try:
         conn = get_db_connection()
         itinerary = conn.execute(
-            'SELECT id, firebase_uid FROM saved_itineraries WHERE id = ?',
+            'SELECT id, firebase_uid, destination FROM saved_itineraries WHERE id = ?',
             (itinerary_id,)
         ).fetchone()
 
@@ -2067,6 +2356,16 @@ def leave_itinerary_collaboration(itinerary_id):
             requester_uid,
             'leave_itinerary',
             None
+        )
+
+        _create_user_notification(
+            conn,
+            recipient_uid=itinerary['firebase_uid'],
+            actor_uid=requester_uid,
+            itinerary_id=itinerary_id,
+            notification_type='collaborator_left',
+            message=f"A collaborator left {str(itinerary['destination'] or 'your itinerary')}.",
+            metadata={'collaborator_uid': requester_uid}
         )
 
         conn.commit()
@@ -2139,6 +2438,21 @@ def remove_itinerary_collaborator(itinerary_id):
                 'collaborator_uid': row['collaborator_uid'],
                 'invited_email': row['invited_email'],
                 'status': row['status'],
+            }
+        )
+
+        _create_user_notification(
+            conn,
+            recipient_uid=row['collaborator_uid'],
+            recipient_email=row['invited_email'],
+            actor_uid=auth_user['uid'],
+            itinerary_id=itinerary_id,
+            notification_type='removed_from_itinerary',
+            message=f"You were removed from itinerary {itinerary_id}.",
+            metadata={
+                'status': row['status'],
+                'collaborator_uid': row['collaborator_uid'],
+                'invited_email': row['invited_email'],
             }
         )
 
@@ -2992,11 +3306,17 @@ def publish_trip_journal():
     country = str(data.get('country', '')).strip()
     state = str(data.get('state', '')).strip()
     category = str(data.get('category', 'travel-journal')).strip() or 'travel-journal'
-    image = str(data.get('image', '')).strip() or '/static/images/default_blog.jpg'
+    image = str(data.get('image', '')).strip()
     itinerary_id = _coerce_positive_int(data.get('itinerary_id'))
+    media_urls = _normalize_string_list(data.get('media_urls'), max_items=12)
 
     if not title or not content:
         return jsonify({'error': 'title and content are required'}), 400
+
+    if not image and media_urls:
+        image = media_urls[0]
+    if not image:
+        image = '/static/images/default_blog.jpg'
 
     author = str(data.get('author', '')).strip()
     if not author:
@@ -3050,8 +3370,23 @@ def publish_trip_journal():
                 itinerary_id,
                 auth_user['uid'],
                 'publish_trip_journal',
-                {'post_id': post_id, 'title': title}
+                {
+                    'post_id': post_id,
+                    'title': title,
+                    'media_count': len(media_urls),
+                }
             )
+
+            if str(itinerary['firebase_uid'] or '') != str(auth_user['uid']):
+                _create_user_notification(
+                    conn,
+                    recipient_uid=itinerary['firebase_uid'],
+                    actor_uid=auth_user['uid'],
+                    itinerary_id=itinerary_id,
+                    notification_type='journal_published',
+                    message=f"A collaborator published a trip journal for {str(itinerary['destination'] or 'your itinerary')}.",
+                    metadata={'post_id': post_id, 'title': title}
+                )
 
         conn.commit()
         conn.close()
@@ -3065,6 +3400,336 @@ def publish_trip_journal():
     except Exception as e:
         logging.error(f"Error publishing trip journal: {e}")
         return jsonify({'error': 'Failed to publish trip journal'}), 500
+
+
+@app.route('/api/journal-drafts', methods=['POST'])
+@firebase_auth_required
+def save_trip_journal_draft():
+    """Autosave trip journal drafts and maintain lightweight version history."""
+    auth_user = _get_authenticated_user(optional=False)
+    data = request.json or {}
+
+    itinerary_id = _coerce_positive_int(data.get('itinerary_id'))
+    destination = str(data.get('destination', '')).strip()
+    draft_key = str(data.get('draft_key', '')).strip()
+    title = str(data.get('title', '')).strip()
+    content = str(data.get('content', '')).strip()
+    tags_list = _normalize_string_list(data.get('tags'), max_items=20)
+    media_urls = _normalize_string_list(data.get('media_urls'), max_items=12)
+
+    if not draft_key:
+        draft_key = _build_journal_draft_key(itinerary_id, destination)
+
+    if not draft_key:
+        return jsonify({'error': 'draft_key could not be determined'}), 400
+
+    try:
+        conn = get_db_connection()
+
+        if itinerary_id:
+            itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+            if not itinerary:
+                conn.close()
+                return jsonify({'error': 'Itinerary not found'}), 404
+            if not has_access:
+                conn.close()
+                return jsonify({'error': 'Forbidden: you do not have access to this itinerary.'}), 403
+            if not destination:
+                destination = str(itinerary['destination'] or '').strip()
+
+        tags_text = ','.join(tags_list)
+        media_text = json.dumps(media_urls)
+
+        existing_row = conn.execute(
+            '''SELECT id, title, content, tags, media_urls
+               FROM trip_journal_drafts
+               WHERE firebase_uid = ? AND draft_key = ?
+               LIMIT 1''',
+            (auth_user['uid'], draft_key)
+        ).fetchone()
+
+        conn.execute(
+            '''INSERT INTO trip_journal_drafts
+               (firebase_uid, itinerary_id, draft_key, destination, title, content, tags, media_urls)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(firebase_uid, draft_key) DO UPDATE SET
+                   itinerary_id = excluded.itinerary_id,
+                   destination = excluded.destination,
+                   title = excluded.title,
+                   content = excluded.content,
+                   tags = excluded.tags,
+                   media_urls = excluded.media_urls,
+                   updated_at = CURRENT_TIMESTAMP''',
+            (
+                auth_user['uid'],
+                itinerary_id,
+                draft_key,
+                destination,
+                title,
+                content,
+                tags_text,
+                media_text,
+            )
+        )
+
+        draft_row = conn.execute(
+            '''SELECT *
+               FROM trip_journal_drafts
+               WHERE firebase_uid = ? AND draft_key = ?
+               LIMIT 1''',
+            (auth_user['uid'], draft_key)
+        ).fetchone()
+
+        if not draft_row:
+            conn.close()
+            return jsonify({'error': 'Failed to save draft'}), 500
+
+        should_version = True
+        if existing_row:
+            existing_title = str(existing_row['title'] or '')
+            existing_content = str(existing_row['content'] or '')
+            existing_tags = str(existing_row['tags'] or '')
+            existing_media = str(existing_row['media_urls'] or '')
+            should_version = any([
+                existing_title != title,
+                existing_content != content,
+                existing_tags != tags_text,
+                existing_media != media_text,
+            ])
+
+        if should_version:
+            conn.execute(
+                '''INSERT INTO trip_journal_versions
+                   (draft_id, firebase_uid, itinerary_id, title, content, tags, media_urls)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    draft_row['id'],
+                    auth_user['uid'],
+                    itinerary_id,
+                    title,
+                    content,
+                    tags_text,
+                    media_text,
+                )
+            )
+            conn.execute(
+                '''DELETE FROM trip_journal_versions
+                   WHERE draft_id = ?
+                     AND id NOT IN (
+                       SELECT id FROM trip_journal_versions
+                       WHERE draft_id = ?
+                       ORDER BY created_at DESC, id DESC
+                       LIMIT 30
+                   )''',
+                (draft_row['id'], draft_row['id'])
+            )
+
+        version_count = conn.execute(
+            'SELECT COUNT(*) AS count FROM trip_journal_versions WHERE draft_id = ?',
+            (draft_row['id'],)
+        ).fetchone()['count']
+
+        if itinerary_id:
+            _log_itinerary_activity(
+                conn,
+                itinerary_id,
+                auth_user['uid'],
+                'save_journal_draft',
+                {'draft_id': draft_row['id'], 'version_count': version_count}
+            )
+
+        conn.commit()
+        conn.close()
+
+        response_draft = dict(draft_row)
+        response_draft['tags'] = tags_list
+        response_draft['media_urls'] = media_urls
+
+        return jsonify({
+            'message': 'Draft saved',
+            'draft': response_draft,
+            'version_count': version_count,
+        }), 200
+    except Exception as e:
+        logging.error(f"Error saving trip journal draft: {e}")
+        return jsonify({'error': 'Failed to save trip journal draft'}), 500
+
+
+@app.route('/api/journal-drafts/latest', methods=['GET'])
+@firebase_auth_required
+def get_latest_trip_journal_draft():
+    """Return the latest draft for the user by draft key or itinerary."""
+    auth_user = _get_authenticated_user(optional=False)
+    itinerary_id = _coerce_positive_int(request.args.get('itinerary_id'))
+    destination = str(request.args.get('destination', '')).strip()
+    draft_key = str(request.args.get('draft_key', '')).strip()
+
+    try:
+        conn = get_db_connection()
+
+        if itinerary_id:
+            itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+            if not itinerary:
+                conn.close()
+                return jsonify({'error': 'Itinerary not found'}), 404
+            if not has_access:
+                conn.close()
+                return jsonify({'error': 'Forbidden: you do not have access to this itinerary.'}), 403
+
+        query = '''SELECT *
+                   FROM trip_journal_drafts
+                   WHERE firebase_uid = ?'''
+        params = [auth_user['uid']]
+
+        if draft_key:
+            query += ' AND draft_key = ?'
+            params.append(draft_key)
+        elif itinerary_id:
+            query += ' AND itinerary_id = ?'
+            params.append(itinerary_id)
+        elif destination:
+            generated_key = _build_journal_draft_key(None, destination)
+            query += ' AND draft_key = ?'
+            params.append(generated_key)
+
+        query += ' ORDER BY updated_at DESC LIMIT 1'
+
+        draft_row = conn.execute(query, tuple(params)).fetchone()
+        conn.close()
+
+        if not draft_row:
+            return jsonify({'draft': None})
+
+        draft = dict(draft_row)
+        draft['tags'] = _normalize_string_list(draft.get('tags'), max_items=20)
+        media_raw = draft.get('media_urls')
+        try:
+            draft['media_urls'] = json.loads(media_raw) if media_raw else []
+        except (TypeError, json.JSONDecodeError):
+            draft['media_urls'] = []
+
+        return jsonify({'draft': draft})
+    except Exception as e:
+        logging.error(f"Error loading latest trip journal draft: {e}")
+        return jsonify({'error': 'Failed to load trip journal draft'}), 500
+
+
+@app.route('/api/journal-drafts/history', methods=['GET'])
+@firebase_auth_required
+def get_trip_journal_draft_history():
+    """Return draft version history for the authenticated user."""
+    auth_user = _get_authenticated_user(optional=False)
+    itinerary_id = _coerce_positive_int(request.args.get('itinerary_id'))
+    draft_key = str(request.args.get('draft_key', '')).strip()
+    limit = _coerce_positive_int(request.args.get('limit')) or 15
+    limit = max(1, min(limit, 50))
+
+    if not draft_key and not itinerary_id:
+        return jsonify({'error': 'draft_key or itinerary_id is required'}), 400
+
+    try:
+        conn = get_db_connection()
+
+        if itinerary_id:
+            itinerary, has_access, _is_owner = _resolve_itinerary_access(conn, itinerary_id, auth_user['uid'])
+            if not itinerary:
+                conn.close()
+                return jsonify({'error': 'Itinerary not found'}), 404
+            if not has_access:
+                conn.close()
+                return jsonify({'error': 'Forbidden: you do not have access to this itinerary.'}), 403
+
+        if draft_key:
+            draft_row = conn.execute(
+                '''SELECT * FROM trip_journal_drafts
+                   WHERE firebase_uid = ? AND draft_key = ?
+                   ORDER BY updated_at DESC
+                   LIMIT 1''',
+                (auth_user['uid'], draft_key)
+            ).fetchone()
+        else:
+            draft_row = conn.execute(
+                '''SELECT * FROM trip_journal_drafts
+                   WHERE firebase_uid = ? AND itinerary_id = ?
+                   ORDER BY updated_at DESC
+                   LIMIT 1''',
+                (auth_user['uid'], itinerary_id)
+            ).fetchone()
+
+        if not draft_row:
+            conn.close()
+            return jsonify({'draft': None, 'versions': []})
+
+        versions = conn.execute(
+            '''SELECT id, title, content, tags, media_urls, created_at
+               FROM trip_journal_versions
+               WHERE draft_id = ?
+               ORDER BY created_at DESC, id DESC
+               LIMIT ?''',
+            (draft_row['id'], limit)
+        ).fetchall()
+        conn.close()
+
+        version_items = []
+        for row in versions:
+            item = dict(row)
+            item['tags'] = _normalize_string_list(item.get('tags'), max_items=20)
+            try:
+                item['media_urls'] = json.loads(item.get('media_urls') or '[]')
+            except (TypeError, json.JSONDecodeError):
+                item['media_urls'] = []
+            version_items.append(item)
+
+        draft_payload = dict(draft_row)
+        draft_payload['tags'] = _normalize_string_list(draft_payload.get('tags'), max_items=20)
+        try:
+            draft_payload['media_urls'] = json.loads(draft_payload.get('media_urls') or '[]')
+        except (TypeError, json.JSONDecodeError):
+            draft_payload['media_urls'] = []
+
+        return jsonify({
+            'draft': draft_payload,
+            'versions': version_items,
+        })
+    except Exception as e:
+        logging.error(f"Error loading trip journal history: {e}")
+        return jsonify({'error': 'Failed to load trip journal history'}), 500
+
+
+@app.route('/api/journal-media', methods=['POST'])
+@firebase_auth_required
+def upload_journal_media():
+    """Upload a journal image attachment and return a static URL."""
+    _auth_user = _get_authenticated_user(optional=False)
+
+    if 'image' not in request.files:
+        return jsonify({'error': 'image file is required'}), 400
+
+    image_file = request.files['image']
+    if not image_file or not image_file.filename:
+        return jsonify({'error': 'image file is required'}), 400
+
+    if not allowed_file(image_file.filename):
+        return jsonify({'error': 'Unsupported file type'}), 400
+
+    try:
+        original_name = secure_filename(image_file.filename)
+        timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
+        filename = f"journal_{timestamp}_{original_name}"
+        upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'journal')
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_path = os.path.join(upload_dir, filename)
+        image_file.save(file_path)
+
+        media_url = '/' + file_path.replace('\\', '/')
+        return jsonify({
+            'message': 'Journal media uploaded.',
+            'media_url': media_url,
+        }), 201
+    except Exception as e:
+        logging.error(f"Error uploading journal media: {e}")
+        return jsonify({'error': 'Failed to upload journal media'}), 500
 
 @app.route('/blog/<int:post_id>')
 def blog_post(post_id):

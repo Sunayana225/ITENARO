@@ -1,4 +1,5 @@
 import os
+import io
 import sqlite3
 import sys
 from pathlib import Path
@@ -69,6 +70,31 @@ def _create_tables(db_path):
             tags TEXT,
             image TEXT
         );
+        CREATE TABLE IF NOT EXISTS trip_journal_drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            firebase_uid TEXT NOT NULL,
+            itinerary_id INTEGER,
+            draft_key TEXT NOT NULL,
+            destination TEXT,
+            title TEXT,
+            content TEXT,
+            tags TEXT,
+            media_urls TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(firebase_uid, draft_key)
+        );
+        CREATE TABLE IF NOT EXISTS trip_journal_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_id INTEGER NOT NULL,
+            firebase_uid TEXT NOT NULL,
+            itinerary_id INTEGER,
+            title TEXT,
+            content TEXT,
+            tags TEXT,
+            media_urls TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         '''
     )
     conn.commit()
@@ -97,9 +123,38 @@ def client_with_auth(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "check_rate_limit", lambda: (True, None))
     monkeypatch.setattr(app_module, "record_api_call", lambda: None)
 
+    upload_root = Path(app_module.app.config.get("UPLOAD_FOLDER", os.path.join("static", "uploads")))
+    journal_upload_dir = upload_root / "journal"
+    existing_uploads = set(journal_upload_dir.glob("journal_*")) if journal_upload_dir.exists() else set()
+
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as test_client:
         yield test_client, auth_context, str(db_path)
+
+    if journal_upload_dir.exists():
+        current_uploads = set(journal_upload_dir.glob("journal_*"))
+        for file_path in current_uploads - existing_uploads:
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+
+        try:
+            next(journal_upload_dir.iterdir())
+        except StopIteration:
+            try:
+                journal_upload_dir.rmdir()
+            except OSError:
+                pass
+
+    if upload_root.exists():
+        try:
+            next(upload_root.iterdir())
+        except StopIteration:
+            try:
+                upload_root.rmdir()
+            except OSError:
+                pass
 
 
 def _sample_itinerary():
@@ -254,3 +309,65 @@ def test_publish_trip_journal_forbidden_for_outsider(client_with_auth):
 
     assert response.status_code == 403
     assert "forbidden" in response.get_json()["error"].lower()
+
+
+def test_journal_draft_save_and_load_history(client_with_auth):
+    client, _auth, _db_path = client_with_auth
+
+    first_save = client.post(
+        "/api/journal-drafts",
+        json={
+            "itinerary_id": 1,
+            "title": "Paris Draft",
+            "content": "First draft body",
+            "tags": ["paris", "journal"],
+            "media_urls": ["/static/uploads/journal/photo-1.jpg"],
+        },
+    )
+    assert first_save.status_code == 200
+
+    second_save = client.post(
+        "/api/journal-drafts",
+        json={
+            "itinerary_id": 1,
+            "title": "Paris Draft",
+            "content": "Second draft body with updates",
+            "tags": ["paris", "journal", "updated"],
+            "media_urls": ["/static/uploads/journal/photo-2.jpg"],
+        },
+    )
+    assert second_save.status_code == 200
+
+    latest = client.get("/api/journal-drafts/latest?itinerary_id=1")
+    assert latest.status_code == 200
+    latest_body = latest.get_json()
+    assert latest_body["draft"] is not None
+    assert "Second draft" in latest_body["draft"]["content"]
+
+    history = client.get("/api/journal-drafts/history?itinerary_id=1")
+    assert history.status_code == 200
+    history_body = history.get_json()
+    assert history_body["draft"] is not None
+    assert len(history_body["versions"]) >= 2
+
+
+def test_journal_media_upload_requires_file(client_with_auth):
+    client, _auth, _db_path = client_with_auth
+
+    response = client.post("/api/journal-media")
+    assert response.status_code == 400
+    assert "image" in response.get_json()["error"].lower()
+
+
+def test_journal_media_upload_success(client_with_auth):
+    client, _auth, _db_path = client_with_auth
+
+    response = client.post(
+        "/api/journal-media",
+        data={"image": (io.BytesIO(b"\x89PNG\r\n\x1a\n\x00\x00\x00"), "cover.png")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["media_url"].startswith("/static/uploads/journal/")

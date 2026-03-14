@@ -873,6 +873,20 @@
                             </div>
                         </div>
 
+                        <!-- Notifications Inbox Section -->
+                        <div class="section-card">
+                            <div class="section-header">
+                                <div class="section-title">🔔 Notifications & Inbox</div>
+                                <button class="edit-btn" onclick="markAllNotificationsRead()">Mark All Read</button>
+                            </div>
+                            <div id="notificationsContainer">
+                                <div style="text-align: center; padding: 24px; color: #aaa;">
+                                    <div style="font-size: 40px; margin-bottom: 8px;">📬</div>
+                                    <p>No notifications yet.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Shared With Me Section -->
                         <div class="section-card">
                             <div class="section-header">
@@ -1694,6 +1708,104 @@
             }
         }
 
+        async function loadNotifications() {
+            if (!currentUser) return;
+            try {
+                const resp = await authFetch('/api/notifications?limit=30');
+                const data = await resp.json();
+                if (!resp.ok) {
+                    console.error('Error loading notifications:', data.error);
+                    return;
+                }
+                renderNotifications(data.notifications || []);
+            } catch (err) {
+                console.error('Error loading notifications:', err);
+            }
+        }
+
+        function renderNotifications(notifications) {
+            const container = document.getElementById('notificationsContainer');
+            if (!container) return;
+
+            if (!notifications || notifications.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 24px; color: #aaa;">
+                        <div style="font-size: 40px; margin-bottom: 8px;">📬</div>
+                        <p>No notifications yet.</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = notifications.map(note => {
+                const when = note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time';
+                return `
+                    <div style="
+                        border: 1px solid ${note.is_read ? '#ececec' : '#b8e0ff'};
+                        background: ${note.is_read ? '#fff' : '#f4fbff'};
+                        border-radius: 10px;
+                        padding: 12px 14px;
+                        margin-bottom: 10px;
+                    ">
+                        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+                            <div>
+                                <div style="font-size: 0.85rem; color: #6a7b8c; margin-bottom: 4px;">${when}</div>
+                                <div style="font-weight:${note.is_read ? '500' : '700'}; color:#2f3a46;">${note.message || 'Notification'}</div>
+                            </div>
+                            ${note.is_read ? '' : `<button type="button" onclick="markNotificationRead(${note.id})" style="
+                                border:none;
+                                border-radius:8px;
+                                padding:6px 10px;
+                                background:#2d7ff9;
+                                color:white;
+                                font-size:0.75rem;
+                                font-weight:600;
+                                cursor:pointer;
+                            ">Mark read</button>`}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        window.markNotificationRead = async function(notificationId) {
+            if (!currentUser) return;
+            try {
+                const resp = await authFetch(`/api/notifications/${notificationId}/read`, {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    await loadNotifications();
+                } else {
+                    showMessage(data.error || 'Failed to mark notification as read', 'error');
+                }
+            } catch (err) {
+                console.error('Mark notification read error:', err);
+                showMessage('Failed to mark notification as read', 'error');
+            }
+        };
+
+        window.markAllNotificationsRead = async function() {
+            if (!currentUser) return;
+            try {
+                const resp = await authFetch('/api/notifications/read-all', {
+                    method: 'POST',
+                    body: JSON.stringify({})
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    await loadNotifications();
+                    showMessage('All notifications marked as read.', 'success');
+                } else {
+                    showMessage(data.error || 'Failed to update notifications', 'error');
+                }
+            } catch (err) {
+                console.error('Mark all notifications error:', err);
+                showMessage('Failed to update notifications', 'error');
+            }
+        };
+
         async function loadSharedItineraries() {
             if (!currentUser) return;
             try {
@@ -2048,6 +2160,7 @@
         function loadAllProfileData() {
             loadPassport();
             loadSavedItineraries();
+            loadNotifications();
             loadSharedItineraries();
         }
 
@@ -2055,6 +2168,11 @@
         const profileCheckInterval = setInterval(() => {
             if (currentUser) {
                 loadAllProfileData();
+                setInterval(() => {
+                    if (currentUser) {
+                        loadNotifications();
+                    }
+                }, 30000);
                 clearInterval(profileCheckInterval);
             }
         }, 500);
