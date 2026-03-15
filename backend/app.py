@@ -492,6 +492,7 @@ def create_profile():
         auth_user = _get_authenticated_user(optional=False)
         firebase_uid = auth_user['uid']
         email = auth_user.get('email') or data.get('email', '')
+        profile_picture = str(data.get('profile_picture') or '').strip() or None
 
         if data.get('firebase_uid') and data.get('firebase_uid') != firebase_uid:
             return jsonify({'error': 'Forbidden: resource ownership mismatch.'}), 403
@@ -508,10 +509,10 @@ def create_profile():
             return jsonify(dict(existing)), 200
 
         cursor = conn.execute(
-            '''INSERT INTO user_profiles (firebase_uid, email, display_name, bio, travel_preferences)
-               VALUES (?, ?, ?, ?, ?)''',
+                '''INSERT INTO user_profiles (firebase_uid, email, display_name, bio, profile_picture, travel_preferences)
+                    VALUES (?, ?, ?, ?, ?, ?)''',
             (firebase_uid, email, data.get('display_name', ''),
-             data.get('bio', ''), data.get('travel_preferences', '{}'))
+                 data.get('bio', ''), profile_picture, data.get('travel_preferences', '{}'))
         )
 
         profile_id = cursor.lastrowid
@@ -538,15 +539,38 @@ def update_profile(firebase_uid):
         return ownership_error
 
     try:
-        data = request.json
+        data = request.json or {}
         conn = get_db_connection()
 
+        update_fields = []
+        update_values = []
+
+        if 'display_name' in data:
+            update_fields.append('display_name = ?')
+            update_values.append(data.get('display_name'))
+        if 'bio' in data:
+            update_fields.append('bio = ?')
+            update_values.append(data.get('bio'))
+        if 'travel_preferences' in data:
+            update_fields.append('travel_preferences = ?')
+            update_values.append(data.get('travel_preferences'))
+        if 'profile_picture' in data:
+            profile_picture = str(data.get('profile_picture') or '').strip() or None
+            update_fields.append('profile_picture = ?')
+            update_values.append(profile_picture)
+
+        if not update_fields:
+            conn.close()
+            return jsonify({'error': 'No profile fields provided for update'}), 400
+
+        update_fields.append('updated_at = CURRENT_TIMESTAMP')
+        update_values.append(firebase_uid)
+
         conn.execute(
-            '''UPDATE user_profiles
-               SET display_name = ?, bio = ?, travel_preferences = ?, updated_at = CURRENT_TIMESTAMP
+            f'''UPDATE user_profiles
+               SET {', '.join(update_fields)}
                WHERE firebase_uid = ?''',
-            (data.get('display_name'), data.get('bio'),
-             data.get('travel_preferences'), firebase_uid)
+            tuple(update_values)
         )
         conn.commit()
 
@@ -555,12 +579,85 @@ def update_profile(firebase_uid):
             'SELECT * FROM user_profiles WHERE firebase_uid = ?',
             (firebase_uid,)
         ).fetchone()
+
+        if not profile:
+            conn.close()
+            return jsonify({'error': 'Profile not found'}), 404
+
         conn.close()
 
         return jsonify(dict(profile))
     except Exception as e:
         logging.error(f"Error updating profile: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/profile/<firebase_uid>/picture', methods=['POST'])
+@firebase_auth_required
+def upload_profile_picture(firebase_uid):
+    """Upload and persist a profile picture for the authenticated user."""
+    ownership_error = _enforce_uid_ownership(firebase_uid)
+    if ownership_error:
+        return ownership_error
+
+    if 'image' not in request.files:
+        return jsonify({'error': 'image file is required'}), 400
+
+    image_file = request.files['image']
+    if not image_file or not image_file.filename:
+        return jsonify({'error': 'image file is required'}), 400
+
+    if not allowed_file(image_file.filename):
+        return jsonify({'error': 'Unsupported file type'}), 400
+
+    try:
+        conn = get_db_connection()
+        profile = conn.execute(
+            'SELECT profile_picture FROM user_profiles WHERE firebase_uid = ?',
+            (firebase_uid,)
+        ).fetchone()
+
+        if not profile:
+            conn.close()
+            return jsonify({'error': 'Profile not found'}), 404
+
+        original_name = secure_filename(image_file.filename)
+        timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
+        safe_uid = secure_filename(firebase_uid)
+        filename = f"profile_{safe_uid}_{timestamp}_{original_name}"
+
+        upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'profiles')
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_path = os.path.join(upload_dir, filename)
+        image_file.save(file_path)
+        profile_picture_url = '/' + file_path.replace('\\', '/')
+
+        conn.execute(
+            '''UPDATE user_profiles
+               SET profile_picture = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE firebase_uid = ?''',
+            (profile_picture_url, firebase_uid)
+        )
+        conn.commit()
+        conn.close()
+
+        previous_picture = str(profile['profile_picture'] or '').strip()
+        if previous_picture.startswith('/static/uploads/profiles/'):
+            previous_path = os.path.join(PROJECT_ROOT, previous_picture.lstrip('/').replace('/', os.sep))
+            if os.path.isfile(previous_path):
+                try:
+                    os.remove(previous_path)
+                except OSError:
+                    pass
+
+        return jsonify({
+            'message': 'Profile picture updated.',
+            'profile_picture': profile_picture_url,
+        })
+    except Exception as e:
+        logging.error(f"Error uploading profile picture: {e}")
+        return jsonify({'error': 'Failed to upload profile picture'}), 500
 
 @app.route('/api/destinations', methods=['GET'])
 def get_destinations():
@@ -1074,6 +1171,10 @@ def ensure_phase2_tables():
         conn.execute('ALTER TABLE saved_itineraries ADD COLUMN revision INTEGER DEFAULT 1')
     if 'last_editor_uid' not in saved_itinerary_columns:
         conn.execute('ALTER TABLE saved_itineraries ADD COLUMN last_editor_uid TEXT')
+
+    user_profile_columns = _table_columns(conn, 'user_profiles')
+    if user_profile_columns and 'profile_picture' not in user_profile_columns:
+        conn.execute('ALTER TABLE user_profiles ADD COLUMN profile_picture TEXT')
 
     conn.execute(
         '''CREATE INDEX IF NOT EXISTS idx_itinerary_presence_recent
@@ -1937,24 +2038,72 @@ def get_my_notifications():
     requester_uid = str(auth_user.get('uid') or '').strip()
     requester_email = _normalized_email(auth_user.get('email'))
     unread_only = str(request.args.get('unread_only', '')).strip().lower() in {'1', 'true', 'yes'}
-    limit = _coerce_positive_int(request.args.get('limit')) or 40
+    status_filter = str(request.args.get('status', 'all')).strip().lower()
+    notification_type = str(request.args.get('notification_type', '')).strip().lower()
+    limit = _coerce_positive_int(request.args.get('limit')) or 30
+    try:
+        offset = max(0, int(request.args.get('offset', 0) or 0))
+    except (TypeError, ValueError):
+        offset = 0
     limit = max(1, min(limit, 100))
 
     try:
         conn = get_db_connection()
-        unread_clause = ' AND is_read = 0' if unread_only else ''
+
+        if unread_only:
+            status_filter = 'unread'
+        if status_filter not in {'all', 'unread', 'read'}:
+            status_filter = 'all'
+        if notification_type == 'all':
+            notification_type = ''
+
+        where_clauses = [
+            '''(
+                  (recipient_uid IS NOT NULL AND recipient_uid = ?)
+               OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
+            )'''
+        ]
+        query_params = [requester_uid, requester_email, requester_email]
+
+        if status_filter == 'unread':
+            where_clauses.append('is_read = 0')
+        elif status_filter == 'read':
+            where_clauses.append('is_read = 1')
+
+        if notification_type:
+            where_clauses.append('LOWER(COALESCE(notification_type, "")) = ?')
+            query_params.append(notification_type)
+
+        where_sql = ' AND '.join(where_clauses)
+
+        total_row = conn.execute(
+            f'''SELECT COUNT(*) AS count
+                FROM user_notifications
+                WHERE {where_sql}''',
+            tuple(query_params)
+        ).fetchone()
+        total_count = int(total_row['count']) if total_row else 0
+
+        unread_row = conn.execute(
+            '''SELECT COUNT(*) AS count
+               FROM user_notifications
+               WHERE (
+                      (recipient_uid IS NOT NULL AND recipient_uid = ?)
+                   OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
+               )
+                 AND is_read = 0''',
+            (requester_uid, requester_email, requester_email)
+        ).fetchone()
+        unread_count = int(unread_row['count']) if unread_row else 0
+
         rows = conn.execute(
             f'''SELECT id, recipient_uid, recipient_email, actor_uid, itinerary_id,
                        notification_type, message, metadata, is_read, created_at
                 FROM user_notifications
-                WHERE (
-                      (recipient_uid IS NOT NULL AND recipient_uid = ?)
-                   OR (? != '' AND LOWER(COALESCE(recipient_email, '')) = ?)
-                )
-                {unread_clause}
+                WHERE {where_sql}
                 ORDER BY created_at DESC, id DESC
-                LIMIT ?''',
-            (requester_uid, requester_email, requester_email, limit)
+                LIMIT ? OFFSET ?''',
+            tuple(query_params + [limit, offset])
         ).fetchall()
         conn.close()
 
@@ -1970,7 +2119,11 @@ def get_my_notifications():
 
         return jsonify({
             'notifications': notifications,
-            'unread_count': sum(1 for item in notifications if not item.get('is_read')),
+            'unread_count': unread_count,
+            'total_count': total_count,
+            'limit': limit,
+            'offset': offset,
+            'has_more': (offset + len(notifications)) < total_count,
         })
     except Exception as e:
         logging.error(f"Error loading notifications: {e}")

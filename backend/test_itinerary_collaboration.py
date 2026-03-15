@@ -474,3 +474,52 @@ def test_owner_receives_notification_when_invite_accepted(client_with_auth):
     assert owner_inbox.status_code == 200
     owner_notifications = owner_inbox.get_json()["notifications"]
     assert any(item["notification_type"] == "invite_accepted" for item in owner_notifications)
+
+
+def test_notifications_support_filters_and_pagination(client_with_auth):
+    client, _auth = client_with_auth
+
+    conn = sqlite3.connect(app_module.DATABASE)
+    conn.execute(
+        '''INSERT INTO user_notifications
+           (recipient_uid, recipient_email, actor_uid, itinerary_id, notification_type, message, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        ("user-1", "user1@example.com", "actor-1", 1, "itinerary_invite", "Invite A", 0),
+    )
+    conn.execute(
+        '''INSERT INTO user_notifications
+           (recipient_uid, recipient_email, actor_uid, itinerary_id, notification_type, message, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        ("user-1", "user1@example.com", "actor-2", 1, "itinerary_invite", "Invite B", 0),
+    )
+    conn.execute(
+        '''INSERT INTO user_notifications
+           (recipient_uid, recipient_email, actor_uid, itinerary_id, notification_type, message, is_read)
+           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+        ("user-1", "user1@example.com", "actor-3", 1, "invite_declined", "Declined", 1),
+    )
+    conn.commit()
+    conn.close()
+
+    first_page = client.get(
+        "/api/notifications?status=unread&notification_type=itinerary_invite&limit=1&offset=0"
+    )
+    assert first_page.status_code == 200
+    first_body = first_page.get_json()
+    assert first_body["total_count"] == 2
+    assert first_body["unread_count"] == 2
+    assert first_body["has_more"] is True
+    assert first_body["limit"] == 1
+    assert first_body["offset"] == 0
+    assert len(first_body["notifications"]) == 1
+    assert first_body["notifications"][0]["notification_type"] == "itinerary_invite"
+
+    second_page = client.get(
+        "/api/notifications?status=unread&notification_type=itinerary_invite&limit=1&offset=1"
+    )
+    assert second_page.status_code == 200
+    second_body = second_page.get_json()
+    assert second_body["total_count"] == 2
+    assert second_body["offset"] == 1
+    assert len(second_body["notifications"]) == 1
+    assert second_body["notifications"][0]["id"] != first_body["notifications"][0]["id"]

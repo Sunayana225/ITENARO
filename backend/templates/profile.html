@@ -47,6 +47,35 @@
             color: white;
             border: 4px solid #fff;
             box-shadow: 0 4px 15px rgba(255,127,80,0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .profile-avatar-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
+        .profile-avatar-initial {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .profile-avatar.has-image {
+            background: #ecf1f5;
+        }
+
+        .profile-avatar.has-image .profile-avatar-image {
+            display: block;
+        }
+
+        .profile-avatar.has-image .profile-avatar-initial {
+            display: none;
         }
 
         .profile-name {
@@ -175,6 +204,126 @@
 
         .edit-btn:hover {
             background: #2980b9;
+        }
+
+        .profile-unread-pill {
+            margin: 0 0 20px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #f4fbff;
+            border: 1px solid #d6edff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            font-size: 0.86rem;
+            color: #2f4a62;
+            font-weight: 600;
+            transition: background 0.2s ease;
+        }
+
+        .profile-unread-pill:hover {
+            background: #e9f6ff;
+        }
+
+        .notif-count-badge {
+            min-width: 24px;
+            height: 24px;
+            border-radius: 999px;
+            background: #ff7f50;
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0 7px;
+            margin-left: 8px;
+        }
+
+        .notifications-toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .notifications-filter-select {
+            border: 1px solid #dde3ea;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 0.84rem;
+            background: #fff;
+            color: #425466;
+            min-width: 140px;
+        }
+
+        .notifications-meta {
+            font-size: 0.8rem;
+            color: #76879b;
+            margin-bottom: 12px;
+        }
+
+        .notifications-pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .notifications-page-btn {
+            border: 1px solid #dbe1e8;
+            background: white;
+            color: #39516b;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .notifications-page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .notifications-page-info {
+            color: #66788a;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .profile-photo-preview {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            margin: 0 auto;
+            overflow: hidden;
+            background: #eef2f6;
+            border: 3px solid #fff;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #4f6278;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .profile-photo-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
+        .profile-photo-preview.has-image img {
+            display: block;
+        }
+
+        .profile-photo-preview.has-image span {
+            display: none;
         }
 
         /* Info Grid */
@@ -755,7 +904,10 @@
                 <div class="profile-layout">
                     <!-- Left Profile Card -->
                     <div class="profile-card">
-                        <div class="profile-avatar" id="profileAvatar">U</div>
+                        <div class="profile-avatar" id="profileAvatar">
+                            <img id="profileAvatarImage" class="profile-avatar-image" alt="Profile picture">
+                            <span id="profileAvatarInitial" class="profile-avatar-initial">U</span>
+                        </div>
                         <div class="profile-name" id="profileName">Loading...</div>
                         <div class="profile-title" id="profileTitle">Travel Enthusiast</div>
                         <div class="profile-location" id="profileLocation">Bay Area, San Francisco, CA</div>
@@ -763,6 +915,11 @@
                         <div class="profile-actions">
                             <button class="profile-btn primary" onclick="editProfile()">Edit</button>
                             <button class="profile-btn secondary" onclick="shareProfile()">Message</button>
+                        </div>
+
+                        <div class="profile-unread-pill" onclick="scrollToNotifications()">
+                            <span>Unread Inbox</span>
+                            <span id="globalUnreadBadge" class="notif-count-badge">0</span>
                         </div>
 
                         <div class="profile-links">
@@ -874,16 +1031,46 @@
                         </div>
 
                         <!-- Notifications Inbox Section -->
-                        <div class="section-card">
+                        <div class="section-card" id="notificationsSection">
                             <div class="section-header">
-                                <div class="section-title">🔔 Notifications & Inbox</div>
+                                <div class="section-title">
+                                    🔔 Notifications & Inbox
+                                    <span id="notificationsHeaderBadge" class="notif-count-badge">0</span>
+                                </div>
                                 <button class="edit-btn" onclick="markAllNotificationsRead()">Mark All Read</button>
                             </div>
+
+                            <div class="notifications-toolbar">
+                                <select id="notificationStatusFilter" class="notifications-filter-select" onchange="onNotificationFiltersChanged()">
+                                    <option value="all">All statuses</option>
+                                    <option value="unread">Unread only</option>
+                                    <option value="read">Read only</option>
+                                </select>
+                                <select id="notificationTypeFilter" class="notifications-filter-select" onchange="onNotificationFiltersChanged()">
+                                    <option value="all">All types</option>
+                                    <option value="itinerary_invite">Invites</option>
+                                    <option value="invite_accepted">Accepted</option>
+                                    <option value="invite_declined">Declined</option>
+                                    <option value="collaborator_left">Collaborator left</option>
+                                    <option value="removed_from_itinerary">Removed</option>
+                                    <option value="journal_published">Journal published</option>
+                                </select>
+                                <button class="edit-btn" style="padding: 8px 14px;" onclick="resetNotificationFilters()">Reset</button>
+                            </div>
+
+                            <div id="notificationSummary" class="notifications-meta">Loading notifications...</div>
+
                             <div id="notificationsContainer">
                                 <div style="text-align: center; padding: 24px; color: #aaa;">
                                     <div style="font-size: 40px; margin-bottom: 8px;">📬</div>
                                     <p>No notifications yet.</p>
                                 </div>
+                            </div>
+
+                            <div class="notifications-pagination">
+                                <button type="button" id="notificationsPrevBtn" class="notifications-page-btn" onclick="changeNotificationPage(-1)">Previous</button>
+                                <span id="notificationsPageInfo" class="notifications-page-info">Page 1</span>
+                                <button type="button" id="notificationsNextBtn" class="notifications-page-btn" onclick="changeNotificationPage(1)">Next</button>
                             </div>
                         </div>
 
@@ -1024,6 +1211,36 @@
                 </div>
             </div>
 
+            <!-- Edit Profile Picture Modal -->
+            <div id="editProfilePhotoModal" class="modal">
+                <div class="modal-content" style="max-width: 520px;">
+                    <div class="modal-header">
+                        <h2 class="modal-title">Update Profile Picture</h2>
+                        <button class="close-btn" onclick="closeModal('editProfilePhotoModal')">&times;</button>
+                    </div>
+
+                    <div class="form-group" style="text-align: center;">
+                        <label>Preview</label>
+                        <div id="profilePhotoPreview" class="profile-photo-preview">
+                            <img id="profilePhotoPreviewImage" alt="Profile picture preview">
+                            <span id="profilePhotoPreviewInitial">U</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="profilePictureInput">Choose new image</label>
+                        <input type="file" id="profilePictureInput" accept="image/png,image/jpeg,image/jpg,image/gif">
+                        <p style="margin-top:8px; font-size:0.82rem; color:#7b8794;">Supported: PNG, JPG, JPEG, GIF. Max size: 5 MB.</p>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('editProfilePhotoModal')">Cancel</button>
+                        <button type="button" class="btn btn-secondary" onclick="removeProfilePicture()">Remove Photo</button>
+                        <button type="button" class="btn btn-primary" onclick="saveProfilePicture()">Save Photo</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Collaboration Manager Modal -->
             <div id="collabManagerModal" class="modal">
                 <div class="modal-content" style="max-width: 720px;">
@@ -1083,6 +1300,18 @@
         let userWishlist = [];
         let availableDestinations = [];
         let activeCollabManagerItineraryId = null;
+        let selectedProfilePictureFile = null;
+        const NOTIFICATIONS_PAGE_SIZE = 10;
+        let notificationsState = {
+            status: 'all',
+            type: 'all',
+            limit: NOTIFICATIONS_PAGE_SIZE,
+            offset: 0,
+            totalCount: 0,
+            unreadCount: 0,
+            hasMore: false,
+        };
+        let notificationPollTimer = null;
 
         async function getAuthHeaders(includeJsonContentType = false) {
             const headers = {};
@@ -1105,7 +1334,8 @@
         }
 
         async function authFetch(url, options = {}) {
-            const needsJson = options.body !== undefined;
+            const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+            const needsJson = options.body !== undefined && !isFormData;
             const authHeaders = await getAuthHeaders(needsJson);
             return fetch(url, {
                 ...options,
@@ -1129,9 +1359,173 @@
 
         // Profile functions
         window.editProfile = function() {
-            // This could open a profile picture upload modal in the future
-            alert('Profile picture editing - to be implemented');
+            selectedProfilePictureFile = null;
+            const pictureInput = document.getElementById('profilePictureInput');
+            if (pictureInput) {
+                pictureInput.value = '';
+            }
+            renderProfilePicturePreview();
+            openModal('editProfilePhotoModal');
         };
+
+        window.scrollToNotifications = function() {
+            const section = document.getElementById('notificationsSection');
+            if (section) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        };
+
+        function getAvatarInitial() {
+            const source =
+                (userProfile && userProfile.display_name) ||
+                (currentUser && (currentUser.displayName || currentUser.email)) ||
+                'U';
+            const clean = String(source || 'U').trim();
+            return clean ? clean.charAt(0).toUpperCase() : 'U';
+        }
+
+        function getCurrentProfilePictureUrl() {
+            const fromProfile = String((userProfile && userProfile.profile_picture) || '').trim();
+            if (fromProfile) {
+                return fromProfile;
+            }
+
+            const fromFirebase = String((currentUser && currentUser.photoURL) || '').trim();
+            return fromFirebase || '';
+        }
+
+        function applyProfileAvatar() {
+            const avatar = document.getElementById('profileAvatar');
+            const avatarImage = document.getElementById('profileAvatarImage');
+            const avatarInitial = document.getElementById('profileAvatarInitial');
+            if (!avatar || !avatarImage || !avatarInitial) {
+                return;
+            }
+
+            const initial = getAvatarInitial();
+            const pictureUrl = getCurrentProfilePictureUrl();
+            avatarInitial.textContent = initial;
+
+            if (pictureUrl) {
+                avatarImage.src = pictureUrl;
+                avatar.classList.add('has-image');
+            } else {
+                avatarImage.removeAttribute('src');
+                avatar.classList.remove('has-image');
+            }
+
+            avatarImage.onerror = () => {
+                avatarImage.removeAttribute('src');
+                avatar.classList.remove('has-image');
+            };
+        }
+
+        function renderProfilePicturePreview(previewUrl = '') {
+            const preview = document.getElementById('profilePhotoPreview');
+            const previewImage = document.getElementById('profilePhotoPreviewImage');
+            const previewInitial = document.getElementById('profilePhotoPreviewInitial');
+            if (!preview || !previewImage || !previewInitial) {
+                return;
+            }
+
+            const resolvedUrl = String(previewUrl || getCurrentProfilePictureUrl()).trim();
+            previewInitial.textContent = getAvatarInitial();
+
+            if (resolvedUrl) {
+                previewImage.src = resolvedUrl;
+                preview.classList.add('has-image');
+            } else {
+                previewImage.removeAttribute('src');
+                preview.classList.remove('has-image');
+            }
+
+            previewImage.onerror = () => {
+                previewImage.removeAttribute('src');
+                preview.classList.remove('has-image');
+            };
+        }
+
+        window.saveProfilePicture = async function() {
+            if (!currentUser) return;
+            if (!selectedProfilePictureFile) {
+                showMessage('Please choose an image to upload.', 'error');
+                return;
+            }
+
+            try {
+                const formData = new FormData();
+                formData.append('image', selectedProfilePictureFile);
+
+                const response = await authFetch(`/api/profile/${currentUser.uid}/picture`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showMessage(data.error || 'Failed to upload profile picture', 'error');
+                    return;
+                }
+
+                userProfile = {
+                    ...(userProfile || {}),
+                    profile_picture: data.profile_picture || '',
+                };
+                selectedProfilePictureFile = null;
+                applyProfileAvatar();
+                renderProfilePicturePreview();
+                closeModal('editProfilePhotoModal');
+                showMessage('Profile picture updated successfully!', 'success');
+            } catch (error) {
+                console.error('Error uploading profile picture:', error);
+                showMessage('Failed to upload profile picture', 'error');
+            }
+        };
+
+        window.removeProfilePicture = async function() {
+            if (!currentUser) return;
+
+            try {
+                const response = await authFetch(`/api/profile/${currentUser.uid}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        profile_picture: ''
+                    })
+                });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showMessage(data.error || 'Failed to remove profile picture', 'error');
+                    return;
+                }
+
+                userProfile = data;
+                selectedProfilePictureFile = null;
+                const pictureInput = document.getElementById('profilePictureInput');
+                if (pictureInput) {
+                    pictureInput.value = '';
+                }
+                applyProfileAvatar();
+                renderProfilePicturePreview();
+                showMessage('Profile picture removed.', 'success');
+            } catch (error) {
+                console.error('Error removing profile picture:', error);
+                showMessage('Failed to remove profile picture', 'error');
+            }
+        };
+
+        function updateNotificationBadges(unreadCount) {
+            const unread = Math.max(0, Number(unreadCount || 0));
+            const globalBadge = document.getElementById('globalUnreadBadge');
+            const headerBadge = document.getElementById('notificationsHeaderBadge');
+
+            if (globalBadge) {
+                globalBadge.textContent = unread > 99 ? '99+' : String(unread);
+            }
+            if (headerBadge) {
+                headerBadge.textContent = unread > 99 ? '99+' : String(unread);
+            }
+        }
 
         window.shareProfile = function() {
             // Copy profile link to clipboard
@@ -1195,8 +1589,7 @@
 
         async function initializeProfile(user) {
             // Update profile header
-            const firstLetter = user.email.charAt(0).toUpperCase();
-            document.getElementById('profileAvatar').textContent = firstLetter;
+            applyProfileAvatar();
             document.getElementById('profileEmail').textContent = user.email;
 
             // Update member since date
@@ -1235,7 +1628,8 @@
                     body: JSON.stringify({
                         firebase_uid: uid,
                         email: currentUser.email,
-                        display_name: currentUser.displayName || currentUser.email.split('@')[0]
+                        display_name: currentUser.displayName || currentUser.email.split('@')[0],
+                        profile_picture: currentUser.photoURL || ''
                     })
                 });
 
@@ -1273,6 +1667,10 @@
                     }
                 }
             }
+
+            updateProfileDisplay();
+            applyProfileAvatar();
+            renderProfilePicturePreview();
         }
 
         // Personal Information form submission
@@ -1316,27 +1714,71 @@
                     }
                 });
             }
+
+            const profilePictureInput = document.getElementById('profilePictureInput');
+            if (profilePictureInput) {
+                profilePictureInput.addEventListener('change', () => {
+                    const file = profilePictureInput.files && profilePictureInput.files[0];
+                    if (!file) {
+                        selectedProfilePictureFile = null;
+                        renderProfilePicturePreview();
+                        return;
+                    }
+
+                    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif'];
+                    if (!allowed.includes(file.type)) {
+                        showMessage('Only PNG, JPG, JPEG, and GIF are allowed.', 'error');
+                        profilePictureInput.value = '';
+                        selectedProfilePictureFile = null;
+                        renderProfilePicturePreview();
+                        return;
+                    }
+
+                    const maxBytes = 5 * 1024 * 1024;
+                    if (file.size > maxBytes) {
+                        showMessage('Image size must be 5 MB or less.', 'error');
+                        profilePictureInput.value = '';
+                        selectedProfilePictureFile = null;
+                        renderProfilePicturePreview();
+                        return;
+                    }
+
+                    selectedProfilePictureFile = file;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        renderProfilePicturePreview(reader.result || '');
+                    };
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            syncNotificationFilterControls();
+            renderNotificationPagination();
+            updateNotificationBadges(0);
         });
 
         function updateProfileDisplay() {
-            if (userProfile) {
-                const displayName = userProfile.display_name || currentUser.email.split('@')[0];
-                document.getElementById('profileName').textContent = displayName;
-                document.getElementById('fullName').textContent = displayName;
+            if (!currentUser) return;
 
-                // Update other fields if they exist in travel_preferences
-                if (userProfile.travel_preferences) {
-                    try {
-                        const prefs = JSON.parse(userProfile.travel_preferences);
-                        if (prefs.phone) document.getElementById('phoneInfo').textContent = prefs.phone;
-                        if (prefs.mobile) document.getElementById('mobileInfo').textContent = prefs.mobile;
-                        if (prefs.address) document.getElementById('addressInfo').textContent = prefs.address;
-                        if (prefs.website) document.getElementById('profileWebsite').textContent = prefs.website;
-                    } catch (e) {
-                        console.error('Error parsing travel preferences:', e);
-                    }
+            const displayName = (userProfile && userProfile.display_name) || currentUser.email.split('@')[0];
+            document.getElementById('profileName').textContent = displayName;
+            document.getElementById('fullName').textContent = displayName;
+
+            let prefs = {};
+            if (userProfile && userProfile.travel_preferences) {
+                try {
+                    prefs = JSON.parse(userProfile.travel_preferences) || {};
+                } catch (e) {
+                    console.error('Error parsing travel preferences:', e);
                 }
             }
+
+            document.getElementById('phoneInfo').textContent = prefs.phone || 'Not set';
+            document.getElementById('mobileInfo').textContent = prefs.mobile || 'Not set';
+            document.getElementById('addressInfo').textContent = prefs.address || 'Not set';
+            document.getElementById('profileWebsite').textContent = prefs.website || 'https://itenaro.com';
+
+            applyProfileAvatar();
         }
 
         function loadWishlistForManagement() {
@@ -1759,17 +2201,142 @@
         async function loadNotifications() {
             if (!currentUser) return;
             try {
-                const resp = await authFetch('/api/notifications?limit=30');
+                const params = new URLSearchParams({
+                    limit: String(notificationsState.limit),
+                    offset: String(notificationsState.offset),
+                });
+                if (notificationsState.status !== 'all') {
+                    params.set('status', notificationsState.status);
+                }
+                if (notificationsState.type !== 'all') {
+                    params.set('notification_type', notificationsState.type);
+                }
+
+                const resp = await authFetch(`/api/notifications?${params.toString()}`);
                 const data = await resp.json();
                 if (!resp.ok) {
                     console.error('Error loading notifications:', data.error);
                     return;
                 }
+
+                notificationsState.totalCount = Number(data.total_count || 0);
+                notificationsState.unreadCount = Number(data.unread_count || 0);
+                notificationsState.hasMore = Boolean(data.has_more);
+                notificationsState.offset = Math.max(0, Number(data.offset || 0));
+
+                if (
+                    notificationsState.offset > 0 &&
+                    (!Array.isArray(data.notifications) || data.notifications.length === 0) &&
+                    notificationsState.totalCount > 0
+                ) {
+                    notificationsState.offset = Math.max(0, notificationsState.offset - notificationsState.limit);
+                    return loadNotifications();
+                }
+
+                syncNotificationFilterControls();
+                updateNotificationBadges(notificationsState.unreadCount);
                 renderNotifications(data.notifications || []);
+                renderNotificationMeta();
+                renderNotificationPagination();
             } catch (err) {
                 console.error('Error loading notifications:', err);
             }
         }
+
+        function syncNotificationFilterControls() {
+            const statusSelect = document.getElementById('notificationStatusFilter');
+            const typeSelect = document.getElementById('notificationTypeFilter');
+            if (statusSelect) {
+                statusSelect.value = notificationsState.status;
+            }
+            if (typeSelect) {
+                typeSelect.value = notificationsState.type;
+            }
+        }
+
+        function getNotificationTypeLabel(notificationType) {
+            const labels = {
+                itinerary_invite: 'Invite',
+                invite_accepted: 'Accepted',
+                invite_declined: 'Declined',
+                collaborator_left: 'Left',
+                removed_from_itinerary: 'Removed',
+                journal_published: 'Journal',
+            };
+            return labels[notificationType] || 'Update';
+        }
+
+        function renderNotificationMeta() {
+            const summary = document.getElementById('notificationSummary');
+            if (!summary) return;
+
+            if (!notificationsState.totalCount) {
+                summary.textContent = 'No notifications for the selected filters.';
+                return;
+            }
+
+            const start = notificationsState.offset + 1;
+            const end = Math.min(
+                notificationsState.offset + notificationsState.limit,
+                notificationsState.totalCount
+            );
+            const currentPage = Math.floor(notificationsState.offset / notificationsState.limit) + 1;
+            const totalPages = Math.max(1, Math.ceil(notificationsState.totalCount / notificationsState.limit));
+
+            summary.textContent = `Showing ${start}-${end} of ${notificationsState.totalCount} notifications • Page ${currentPage}/${totalPages}`;
+        }
+
+        function renderNotificationPagination() {
+            const prevBtn = document.getElementById('notificationsPrevBtn');
+            const nextBtn = document.getElementById('notificationsNextBtn');
+            const pageInfo = document.getElementById('notificationsPageInfo');
+
+            const currentPage = Math.floor(notificationsState.offset / notificationsState.limit) + 1;
+            const totalPages = Math.max(1, Math.ceil(notificationsState.totalCount / notificationsState.limit));
+
+            if (pageInfo) {
+                pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+            }
+            if (prevBtn) {
+                prevBtn.disabled = notificationsState.offset <= 0;
+            }
+            if (nextBtn) {
+                nextBtn.disabled = !notificationsState.hasMore;
+            }
+        }
+
+        window.onNotificationFiltersChanged = async function() {
+            const statusSelect = document.getElementById('notificationStatusFilter');
+            const typeSelect = document.getElementById('notificationTypeFilter');
+
+            notificationsState.status = statusSelect ? statusSelect.value : 'all';
+            notificationsState.type = typeSelect ? typeSelect.value : 'all';
+            notificationsState.offset = 0;
+            await loadNotifications();
+        };
+
+        window.resetNotificationFilters = async function() {
+            notificationsState.status = 'all';
+            notificationsState.type = 'all';
+            notificationsState.offset = 0;
+            syncNotificationFilterControls();
+            await loadNotifications();
+        };
+
+        window.changeNotificationPage = async function(delta) {
+            if (!currentUser) return;
+
+            const nextOffset = notificationsState.offset + (delta * notificationsState.limit);
+            if (nextOffset < 0) {
+                return;
+            }
+            if (delta > 0 && !notificationsState.hasMore) {
+                return;
+            }
+
+            notificationsState.offset = nextOffset;
+            await loadNotifications();
+        };
 
         function renderNotifications(notifications) {
             const container = document.getElementById('notificationsContainer');
@@ -1786,6 +2353,7 @@
 
             container.innerHTML = notifications.map(note => {
                 const when = note.created_at ? new Date(note.created_at).toLocaleString() : 'Unknown time';
+                const typeLabel = getNotificationTypeLabel(note.notification_type);
                 return `
                     <div style="
                         border: 1px solid ${note.is_read ? '#ececec' : '#b8e0ff'};
@@ -1796,8 +2364,11 @@
                     ">
                         <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
                             <div>
-                                <div style="font-size: 0.85rem; color: #6a7b8c; margin-bottom: 4px;">${when}</div>
-                                <div style="font-weight:${note.is_read ? '500' : '700'}; color:#2f3a46;">${note.message || 'Notification'}</div>
+                                <div style="font-size: 0.78rem; color: #6a7b8c; margin-bottom: 4px; display:flex; align-items:center; gap:8px;">
+                                    <span>${escapeHtml(when)}</span>
+                                    <span style="padding:2px 8px; border-radius:999px; background:#edf3fa; color:#57718a; font-weight:700; font-size:0.7rem;">${escapeHtml(typeLabel)}</span>
+                                </div>
+                                <div style="font-weight:${note.is_read ? '500' : '700'}; color:#2f3a46;">${escapeHtml(note.message || 'Notification')}</div>
                             </div>
                             ${note.is_read ? '' : `<button type="button" onclick="markNotificationRead(${note.id})" style="
                                 border:none;
@@ -1843,6 +2414,7 @@
                 });
                 const data = await resp.json();
                 if (resp.ok) {
+                    notificationsState.offset = 0;
                     await loadNotifications();
                     showMessage('All notifications marked as read.', 'success');
                 } else {
@@ -2317,10 +2889,23 @@
         };
 
         // Load passport and itineraries when profile loads
-        const origLoadProfile = window.onAuthReady;
+        function startNotificationPolling() {
+            if (notificationPollTimer) {
+                clearInterval(notificationPollTimer);
+                notificationPollTimer = null;
+            }
+
+            notificationPollTimer = setInterval(() => {
+                if (currentUser) {
+                    loadNotifications();
+                }
+            }, 30000);
+        }
+
         function loadAllProfileData() {
             loadPassport();
             loadSavedItineraries();
+            notificationsState.offset = 0;
             loadNotifications();
             loadSharedItineraries();
         }
@@ -2329,11 +2914,7 @@
         const profileCheckInterval = setInterval(() => {
             if (currentUser) {
                 loadAllProfileData();
-                setInterval(() => {
-                    if (currentUser) {
-                        loadNotifications();
-                    }
-                }, 30000);
+                startNotificationPolling();
                 clearInterval(profileCheckInterval);
             }
         }, 500);
