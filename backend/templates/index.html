@@ -3,29 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ITENARO - AI-Powered Travel Itinerary Generator</title>
+    <title>ITENARO — Smart Trip Planner</title>
     <meta name="description" content="Plan your perfect trip with AI. Generate personalized travel itineraries with interactive maps, packing lists, and more.">
     <meta name="theme-color" content="#ff7f50">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260315a') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='index-redesign.css', v='20260315a') }}">
     <!-- Leaflet CSS for interactive maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
-<body>
-    <!-- Header with Logo, Navigation, and Search Bar -->
-    <header>
-        <div class="header-content">
-            <!-- Logo and App Name -->
-            <div class="logo-container">
-                <img src="{{ url_for('static', filename='images/logo.jpg') }}" alt="ITENARO Logo" class="logo">
-                <h1>ITENARO</h1>
-            </div>
+<body class="index-redesign">
+    <header class="redesign-nav">
+        <div class="redesign-nav-inner">
+            <a class="redesign-logo" href="/">
+                <span class="redesign-logo-icon">I</span>
+                <span class="redesign-logo-text">ITENARO</span>
+            </a>
 
-            <!-- Navigation Links -->
-            <nav>
-                <ul>
+            <nav class="redesign-links-nav">
+                <ul class="redesign-links">
                     <li><a href="/">Home</a></li>
                     <li><a href="/destinations">Destinations</a></li>
                     <li><a href="/blog">Blog</a></li>
@@ -33,93 +31,202 @@
                 </ul>
             </nav>
 
-            <!-- Search Bar -->
-            <div class="search-bar">
-                <input type="text" id="headerSearchInput" placeholder="Search for destinations, activities...">
-                <button type="button" id="headerSearchBtn">Search</button>
-            </div>
-
-            <!-- User Profile/Login -->
-            <div class="profile">
-                {% if logged_in %}
-                    <a href="/profile">Profile</a> |
-                    <a href="/logout">Logout</a>
-                {% else %}
-                    <a href="/login">Login</a>
-                {% endif %}
+            <div class="redesign-nav-right">
+                <div class="search-bar hero-search-bar">
+                    <input type="text" id="headerSearchInput" placeholder="Search destinations, tags, journals...">
+                    <button type="button" id="headerSearchBtn">Search</button>
+                </div>
+                <div class="profile">
+                    {% if logged_in %}
+                        <a href="/profile">Profile</a>
+                    {% else %}
+                        <a href="/login">Sign in</a>
+                    {% endif %}
+                </div>
             </div>
         </div>
     </header>
 
-    <!-- Main Content -->
-    <div class="main-content">
-        <div class="container">
-            <h2>Plan Your Perfect Trip ✈️</h2>
-            <!-- Step 1: Destination -->
-            <div class="step" id="step1">
-                <label for="destination">Where do you want to go?</label>
-                <input type="text" id="destination" placeholder="Enter your destination">
-                <button type="button" onclick="nextStep()">Next</button>
-            </div>
-
-            <!-- Step 2: Budget -->
-            <div class="step" id="step2" style="display: none;">
-                <label for="budget">What's your budget?</label>
-                <input type="text" id="budget" placeholder="Enter your budget">
-                <button type="button" onclick="prevStep()">Back</button>
-                <button type="button" onclick="nextStep()">Next</button>
-            </div>
-
-            <!-- Step 3: Duration -->
-            <div class="step" id="step3" style="display: none;">
-                <label for="duration">How long will your trip be?</label>
-                <input type="text" id="duration" placeholder="Enter number of days">
-                <button type="button" onclick="prevStep()">Back</button>
-                <button type="button" onclick="nextStep()">Next</button>
-            </div>
-
-            <!-- Step 4: Purpose -->
-            <div class="step" id="step4" style="display: none;">
-                <label for="purpose">What's the purpose of your trip?</label>
-                <select id="purpose">
-                    <option value="Leisure">Leisure</option>
-                    <option value="Business">Business</option>
-                    <option value="Adventure">Adventure</option>
-                    <option value="Family Time">Family Time</option>
-                    <option value="Romantic Getaway">Romantic Getaway</option>
-                    <option value="Cultural Exploration">Cultural Exploration</option>
-                </select>
-                <button type="button" onclick="prevStep()">Back</button>
-                <button type="button" onclick="nextStep()">Next</button>
-            </div>
-
-            <!-- Step 5: Preferences -->
-            <div class="step" id="step5" style="display: none;">
-                <label>Any specific preferences? (Select one or more)</label>
-                <div class="preference-buttons">
-                    <button type="button" class="preference-btn" data-value="Hiking">Hiking</button>
-                    <button type="button" class="preference-btn" data-value="Museums">Museums</button>
-                    <button type="button" class="preference-btn" data-value="Food Tours">Food Tours</button>
-                    <button type="button" class="preference-btn" data-value="Beaches">Beaches</button>
-                    <button type="button" class="preference-btn" data-value="Shopping">Shopping</button>
-                    <button type="button" class="preference-btn" data-value="Nightlife">Nightlife</button>
-                    <button type="button" class="preference-btn" data-value="Historical Sites">Historical Sites</button>
-                    <button type="button" class="preference-btn" data-value="Adventure Sports">Adventure Sports</button>
-                    <button type="button" class="preference-btn" data-value="Relaxation">Relaxation</button>
-                    <button type="button" class="preference-btn" data-value="Photography">Photography</button>
+    <section class="hero-stage">
+        <div class="hero-stage-bg"></div>
+        <div class="hero-stage-overlay"></div>
+        <div class="hero-stage-content">
+            <div class="hero-copy">
+                <p class="hero-kicker"><span class="hero-kicker-dot"></span> AI-powered travel planning</p>
+                <h1>Your next <em>adventure</em> starts here.</h1>
+                <p class="hero-subcopy">Share your destination, budget and vibe. ITENARO designs a complete trip plan in seconds with maps, exports and live editing tools.</p>
+                <div class="hero-chip-row">
+                    <span class="hero-chip">Beach escape</span>
+                    <span class="hero-chip">Food journey</span>
+                    <span class="hero-chip">Culture & history</span>
+                    <span class="hero-chip">Adventure week</span>
                 </div>
-                <button type="button" onclick="prevStep()">Back</button>
-                <button type="button" id="generateBtn">Generate Itinerary</button>
+            </div>
+
+            <div class="planner-shell">
+                <div class="planner-card">
+                    <p class="planner-label">Trip Builder</p>
+                    <h2>Build your itinerary</h2>
+
+                    <div class="step" id="step1">
+                        <label for="destination">Where do you want to go?</label>
+                        <input type="text" id="destination" placeholder="Paris, Bali, Tokyo...">
+                        <div class="wizard-actions">
+                            <button type="button" class="wizard-btn primary" onclick="nextStep()">Continue</button>
+                        </div>
+                    </div>
+
+                    <div class="step" id="step2" style="display: none;">
+                        <label for="budget">What's your budget?</label>
+                        <input type="text" id="budget" placeholder="Example: 2500 USD">
+                        <div class="wizard-actions">
+                            <button type="button" class="wizard-btn ghost" onclick="prevStep()">Back</button>
+                            <button type="button" class="wizard-btn primary" onclick="nextStep()">Continue</button>
+                        </div>
+                    </div>
+
+                    <div class="step" id="step3" style="display: none;">
+                        <label for="duration">How long is your trip?</label>
+                        <input type="text" id="duration" placeholder="Example: 7 days">
+                        <div class="wizard-actions">
+                            <button type="button" class="wizard-btn ghost" onclick="prevStep()">Back</button>
+                            <button type="button" class="wizard-btn primary" onclick="nextStep()">Continue</button>
+                        </div>
+                    </div>
+
+                    <div class="step" id="step4" style="display: none;">
+                        <label for="purpose">What is your trip purpose?</label>
+                        <select id="purpose">
+                            <option value="Leisure">Leisure</option>
+                            <option value="Business">Business</option>
+                            <option value="Adventure">Adventure</option>
+                            <option value="Family Time">Family Time</option>
+                            <option value="Romantic Getaway">Romantic Getaway</option>
+                            <option value="Cultural Exploration">Cultural Exploration</option>
+                        </select>
+                        <div class="wizard-actions">
+                            <button type="button" class="wizard-btn ghost" onclick="prevStep()">Back</button>
+                            <button type="button" class="wizard-btn primary" onclick="nextStep()">Continue</button>
+                        </div>
+                    </div>
+
+                    <div class="step" id="step5" style="display: none;">
+                        <label>Pick your interests (multi-select)</label>
+                        <div class="preference-buttons">
+                            <button type="button" class="preference-btn" data-value="Hiking">Hiking</button>
+                            <button type="button" class="preference-btn" data-value="Museums">Museums</button>
+                            <button type="button" class="preference-btn" data-value="Food Tours">Food Tours</button>
+                            <button type="button" class="preference-btn" data-value="Beaches">Beaches</button>
+                            <button type="button" class="preference-btn" data-value="Shopping">Shopping</button>
+                            <button type="button" class="preference-btn" data-value="Nightlife">Nightlife</button>
+                            <button type="button" class="preference-btn" data-value="Historical Sites">Historical Sites</button>
+                            <button type="button" class="preference-btn" data-value="Adventure Sports">Adventure Sports</button>
+                            <button type="button" class="preference-btn" data-value="Relaxation">Relaxation</button>
+                            <button type="button" class="preference-btn" data-value="Photography">Photography</button>
+                        </div>
+                        <div class="wizard-actions">
+                            <button type="button" class="wizard-btn ghost" onclick="prevStep()">Back</button>
+                            <button type="button" class="wizard-btn primary" id="generateBtn">Generate Itinerary</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="weather-info" class="hero-weather"></div>
             </div>
         </div>
+    </section>
+
+    <section class="stats-strip">
+        <article>
+            <h3>50K+</h3>
+            <p>Trips planned</p>
+        </article>
+        <article>
+            <h3>190+</h3>
+            <p>Destinations</p>
+        </article>
+        <article>
+            <h3>4.9★</h3>
+            <p>Traveler rating</p>
+        </article>
+        <article>
+            <h3>30s</h3>
+            <p>Average generation</p>
+        </article>
+    </section>
+
+    <section class="showcase-section">
+        <div class="showcase-heading">
+            <p class="showcase-kicker">Explore</p>
+            <h2>Trending destinations</h2>
+            <p>Find itinerary-ready destinations loved by ITENARO travelers this week.</p>
+        </div>
+        <div class="showcase-grid">
+            <article class="showcase-card large"><span>Tokyo, Japan</span></article>
+            <article class="showcase-card"><span>Santorini, Greece</span></article>
+            <article class="showcase-card"><span>Marrakech, Morocco</span></article>
+            <article class="showcase-card"><span>Bali, Indonesia</span></article>
+        </div>
+    </section>
+
+    <section class="value-section">
+        <article>
+            <h3>AI-built itineraries</h3>
+            <p>Generate personalized day-by-day travel plans based on budget, travel style and preferred activities.</p>
+        </article>
+        <article>
+            <h3>Live map context</h3>
+            <p>Visualize every place, add local events and nearby discoveries, then push highlights into your itinerary.</p>
+        </article>
+        <article>
+            <h3>Export and collaborate</h3>
+            <p>Share links, export to PDF/calendar and keep your itinerary and journal synchronized across trip partners.</p>
+        </article>
+    </section>
+
+    <section class="process-section">
+        <div class="showcase-heading">
+            <p class="showcase-kicker">Process</p>
+            <h2>How ITENARO works</h2>
+            <p>From idea to finished itinerary in a smooth, guided flow.</p>
+        </div>
+        <div class="process-grid">
+            <article><strong>1</strong><h4>Choose destination</h4><p>Enter any city or country to begin.</p></article>
+            <article><strong>2</strong><h4>Set preferences</h4><p>Define your budget, duration and trip goals.</p></article>
+            <article><strong>3</strong><h4>Generate with AI</h4><p>Receive a complete day-wise itinerary in seconds.</p></article>
+            <article><strong>4</strong><h4>Refine and export</h4><p>Adjust details, map stops and share your trip plan.</p></article>
+        </div>
+    </section>
+
+    <section class="cta-band">
+        <h2>Ready to design your perfect trip?</h2>
+        <p>Start planning now and turn your travel ideas into a polished itinerary.</p>
+        <button type="button" onclick="document.getElementById('destination')?.focus()">Start planning</button>
+    </section>
+
+    <div class="main-content">
+        <section class="workspace-intro">
+            <p class="showcase-kicker">Workspace</p>
+            <h2>Your trip tools appear here</h2>
+            <p>When you generate an itinerary, this workspace unlocks maps, exports, packing lists, budget charts and AI journaling.</p>
+        </section>
 
         <!-- Itinerary Display Section -->
         <div id="itinerary" class="container itinerary-results-container" style="display: none;">
-            <h2>Your Personalized Itinerary</h2>
+            <div class="itinerary-header-shell">
+                <div class="itinerary-header-main">
+                    <p class="itinerary-eyebrow">Your Itinerary</p>
+                    <h2 id="itineraryTitle">Your Personalized Itinerary</h2>
+                    <div id="itineraryMetaPills" class="itinerary-meta-pills"></div>
+                </div>
+                <button type="button" id="syncIndicator" class="sync-indicator" aria-live="polite" title="Sync status">
+                    <span class="sync-dot" aria-hidden="true"></span>
+                    <span class="sync-text">Not synced yet</span>
+                </button>
+            </div>
             <div id="offlineBanner" class="offline-banner" style="display: none;">
                 You are offline. Showing your last cached itinerary in read-only mode.
             </div>
-            <div id="syncIndicator" class="sync-indicator">Not synced yet</div>
             <div id="presenceStrip" class="presence-strip" style="display: none;"></div>
             <div id="syncConflictBanner" class="sync-conflict-banner" style="display: none;"></div>
             <div id="priceHintsBar" class="price-hints-bar" style="display: none;"></div>
@@ -156,6 +263,22 @@
             <div id="mapSection" class="map-section" style="display: none;">
                 <h3>📍 Interactive Route Map</h3>
                 <div id="dayFilterBar" class="day-filter-bar"></div>
+                <div id="mapLayersBar" class="map-layers-bar">
+                    <label class="map-layer-toggle">
+                        <input type="checkbox" id="toggleEventsLayer" checked>
+                        <span>Local Events</span>
+                    </label>
+                    <label class="map-layer-toggle">
+                        <input type="checkbox" id="toggleNearbyLayer" checked>
+                        <span>Nearby</span>
+                    </label>
+                    <div class="nearby-type-group" id="nearbyTypeGroup">
+                        <label class="nearby-type-toggle"><input type="checkbox" class="nearby-type-input" value="restaurant" checked><span>Restaurants</span></label>
+                        <label class="nearby-type-toggle"><input type="checkbox" class="nearby-type-input" value="cafe" checked><span>Cafes</span></label>
+                        <label class="nearby-type-toggle"><input type="checkbox" class="nearby-type-input" value="attraction" checked><span>Attractions</span></label>
+                    </div>
+                    <button type="button" id="refreshNearbyBtn" class="map-layer-refresh">Refresh Nearby</button>
+                </div>
                 <div id="itineraryMap" class="itinerary-map"></div>
             </div>
 
@@ -270,6 +393,44 @@
                 <h2>📊 Budget Tracker</h2>
                 <button type="button" id="closeBudgetBtn" class="close-packing-btn">&times;</button>
             </div>
+            <div class="budget-controls-row">
+                <div class="budget-control-field">
+                    <label for="budgetDisplayCurrency">Display Currency</label>
+                    <select id="budgetDisplayCurrency">
+                        <option value="USD" selected>USD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                        <option value="JPY">JPY</option>
+                        <option value="INR">INR</option>
+                        <option value="AUD">AUD</option>
+                        <option value="CAD">CAD</option>
+                        <option value="CHF">CHF</option>
+                        <option value="CNY">CNY</option>
+                        <option value="THB">THB</option>
+                        <option value="AED">AED</option>
+                        <option value="SGD">SGD</option>
+                        <option value="KRW">KRW</option>
+                    </select>
+                </div>
+                <div class="budget-control-field">
+                    <label for="expenseCurrency">Quick-Add Currency</label>
+                    <select id="expenseCurrency">
+                        <option value="USD" selected>USD</option>
+                        <option value="EUR">EUR</option>
+                        <option value="GBP">GBP</option>
+                        <option value="JPY">JPY</option>
+                        <option value="INR">INR</option>
+                        <option value="AUD">AUD</option>
+                        <option value="CAD">CAD</option>
+                        <option value="CHF">CHF</option>
+                        <option value="CNY">CNY</option>
+                        <option value="THB">THB</option>
+                        <option value="AED">AED</option>
+                        <option value="SGD">SGD</option>
+                        <option value="KRW">KRW</option>
+                    </select>
+                </div>
+            </div>
             <div class="budget-summary" id="budgetSummary">
                 <div class="budget-total-card">
                     <span class="budget-label">Total Spent</span>
@@ -284,13 +445,19 @@
                     <span class="budget-value" id="budgetRemaining">$0.00</span>
                 </div>
             </div>
-            <div id="budgetChartContainer" class="budget-chart-container">
-                <canvas id="budgetChart" width="300" height="300"></canvas>
+            <div class="budget-charts-grid">
+                <div id="budgetChartContainer" class="budget-chart-container">
+                    <h4>Category Breakdown</h4>
+                    <canvas id="budgetCategoryChart" width="300" height="300"></canvas>
+                </div>
+                <div id="budgetDailyChartContainer" class="budget-chart-container budget-daily-chart-container">
+                    <h4>Daily Spend vs Budget Threshold</h4>
+                    <canvas id="budgetDailyChart" height="180"></canvas>
+                </div>
             </div>
             <div class="expense-form">
-                <h4>Add Expense</h4>
+                <h4>Quick Add Expense</h4>
                 <div class="expense-form-grid">
-                    <input type="text" id="expenseDesc" placeholder="Description (e.g., Lunch at cafe)">
                     <input type="number" id="expenseAmount" placeholder="Amount" step="0.01" min="0">
                     <select id="expenseCategory">
                         <option value="food">🍽️ Food</option>
@@ -300,6 +467,7 @@
                         <option value="shopping">🛍️ Shopping</option>
                         <option value="other">📦 Other</option>
                     </select>
+                    <input type="text" id="expenseNote" placeholder="Note (optional)">
                     <button type="button" id="addExpenseBtn" class="export-btn export-packing">+ Add</button>
                 </div>
             </div>
@@ -341,6 +509,17 @@
         </div>
     </div>
 
+    <footer class="redesign-footer">
+        <div class="redesign-footer-brand">ITENARO</div>
+        <nav class="redesign-footer-links">
+            <a href="/">Home</a>
+            <a href="/destinations">Destinations</a>
+            <a href="/blog">Blog</a>
+            <a href="/contact">Contact</a>
+        </nav>
+        <p>© 2026 ITENARO. Crafted for better travel planning.</p>
+    </footer>
+
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <!-- jsPDF for PDF export -->
@@ -351,7 +530,7 @@
     <!-- Chart.js for budget pie chart -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Main Script -->
-    <script type="module" src="{{ url_for('static', filename='scripts/script.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='scripts/script.js', v='20260315a') }}"></script>
     <!-- Service Worker Registration -->
     <script>
         if ('serviceWorker' in navigator) {

@@ -1500,6 +1500,72 @@ h2 {
     margin-bottom: 14px;
 }
 
+.map-layers-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid #ececec;
+    border-radius: 10px;
+    background: #fff;
+}
+
+.map-layer-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #444;
+    background: #f8f8f8;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid #ebebeb;
+}
+
+.map-layer-toggle input {
+    margin: 0;
+}
+
+.nearby-type-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.nearby-type-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: #555;
+    border: 1px solid #ececec;
+    border-radius: 999px;
+    background: #fff;
+    padding: 5px 9px;
+}
+
+.nearby-type-toggle input {
+    margin: 0;
+}
+
+.map-layer-refresh {
+    border: none;
+    border-radius: 8px;
+    background: #ff7f50;
+    color: #fff;
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 7px 10px;
+    cursor: pointer;
+}
+
+.map-layer-refresh:hover {
+    background: #ff5733;
+}
+
 .day-filter-btn {
     background: #f0f0f0;
     color: #555;
@@ -1549,6 +1615,23 @@ h2 {
     font-size: 0.88rem;
     color: #555;
     line-height: 1.4;
+}
+
+.map-popup-action {
+    border: none;
+    border-radius: 7px;
+    background: #ff7f50;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 700;
+    padding: 7px 9px;
+    margin-top: 8px;
+    cursor: pointer;
+    width: 100%;
+}
+
+.map-popup-action:hover {
+    background: #ff5733;
 }
 
 .map-popup-content .popup-time {
@@ -2613,6 +2696,39 @@ h2 {
     animation: slideUp 0.4s ease;
 }
 
+.budget-controls-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.budget-control-field {
+    background: #fff;
+    border: 1.5px solid #f0f0f0;
+    border-radius: 12px;
+    padding: 10px 12px;
+    text-align: left;
+}
+
+.budget-control-field label {
+    display: block;
+    font-size: 0.8rem;
+    color: #777;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.budget-control-field select {
+    width: 100%;
+    border: 1px solid #dfdfdf;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    color: #333;
+    background: #fff;
+}
+
 .budget-summary {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -2663,9 +2779,23 @@ h2 {
     box-shadow: 0 3px 16px rgba(0,0,0,0.06);
     border: 1.5px solid #f0f0f0;
     margin-bottom: 24px;
-    max-width: 350px;
-    margin-left: auto;
-    margin-right: auto;
+}
+
+.budget-charts-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+    gap: 16px;
+    align-items: stretch;
+}
+
+.budget-chart-container h4 {
+    margin: 0 0 10px 0;
+    font-size: 0.95rem;
+    color: #444;
+}
+
+.budget-daily-chart-container {
+    min-height: 260px;
 }
 
 .expense-form {
@@ -2684,20 +2814,27 @@ h2 {
 }
 
 .expense-form-grid {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(110px, 140px) minmax(150px, 1fr) minmax(180px, 1.5fr) auto;
     gap: 10px;
-    flex-wrap: wrap;
+    align-items: center;
 }
 
 .expense-form-grid input,
 .expense-form-grid select {
-    flex: 1;
-    min-width: 120px;
     padding: 10px 14px;
     border: 2px solid #e0e0e0;
     border-radius: 10px;
     font-size: 0.95rem;
     box-sizing: border-box;
+}
+
+#expenseAmount {
+    text-align: right;
+}
+
+#addExpenseBtn {
+    white-space: nowrap;
 }
 
 .expense-form-grid input:focus,
@@ -2984,12 +3121,24 @@ h2 {
         grid-template-columns: 1fr;
     }
 
+    .budget-controls-row {
+        grid-template-columns: 1fr;
+    }
+
+    .budget-charts-grid {
+        grid-template-columns: 1fr;
+    }
+
     .currency-converter-grid {
         flex-direction: column;
     }
 
     .expense-form-grid {
-        flex-direction: column;
+        grid-template-columns: 1fr;
+    }
+
+    .map-layers-bar {
+        align-items: stretch;
     }
 
     .journal-toolbar {

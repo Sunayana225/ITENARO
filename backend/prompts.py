@@ -1,6 +1,7 @@
 # prompts.py
 import json
 import re
+import html
 
 
 def generate_itinerary_prompt(destination, budget, duration, purpose, preferences):
@@ -284,66 +285,100 @@ def format_structured_itinerary(data):
     """
     Converts structured JSON itinerary into beautiful HTML.
     """
-    html = "<div class='itinerary-content itinerary-structured'>"
+    def esc(value):
+        return html.escape(str(value or ""), quote=True)
 
-    # Summary
-    if data.get('summary'):
-        html += f"<div class='itin-summary'><p>{data['summary']}</p></div>"
+    def infer_activity_tag(name, description):
+        text = f"{name} {description}".lower()
+        if any(token in text for token in ("food", "restaurant", "cafe", "ramen", "dinner", "lunch", "breakfast", "drink", "market")):
+            return "Food", "tag-food"
+        if any(token in text for token in ("museum", "temple", "shrine", "history", "culture", "gallery", "palace", "heritage")):
+            return "Culture", "tag-culture"
+        if any(token in text for token in ("park", "beach", "lake", "nature", "hike", "trail", "mountain", "garden", "island", "river")):
+            return "Nature", "tag-nature"
+        return "Explore", "tag-culture"
 
-    # Weather note
-    if data.get('weather_note'):
-        html += f"<div class='itin-weather-note'>🌤️ {data['weather_note']}</div>"
+    parts = ["<div class='itinerary-content itinerary-structured'>"]
 
-    # Days
-    for day in data.get('days', []):
-        html += f"<div class='itin-day'>"
-        day_title = day.get('title', f"Day {day.get('day', '')}")
-        html += f"<h3 class='itin-day-title'>{day_title}</h3>"
+    summary = data.get('summary')
+    if summary:
+        parts.append(f"<div class='itin-summary'><p>{esc(summary)}</p></div>")
 
-        # Places
-        for place in day.get('places', []):
-            html += f"""<div class='itin-place'>
-                <div class='itin-place-header'>
-                    <span class='itin-place-name'>📍 {place.get('name', '')}</span>
-                    <span class='itin-place-time'>{place.get('time', '')}</span>
-                </div>
-                <p class='itin-place-desc'>{place.get('description', '')}</p>
-                {f"<span class='itin-place-cost'>💰 {place['cost_estimate']}</span>" if place.get('cost_estimate') else ''}
-            </div>"""
+    weather_note = data.get('weather_note')
+    if weather_note:
+        parts.append(f"<div class='itin-weather-note'>🌤 {esc(weather_note)}</div>")
 
-        # Food
+    for index, day in enumerate(data.get('days', []), start=1):
+        day_number = day.get('day', index)
+        day_title = day.get('title') or f"Day {day_number}"
+        places = day.get('places', []) or []
+
+        parts.append(f"<section class='itin-day day-card' data-day-number='{esc(day_number)}'>")
+        parts.append("<div class='itin-day-header day-card-header'>")
+        parts.append(f"<h3 class='itin-day-title day-label'>{esc(day_title)}</h3>")
+        parts.append(f"<span class='itin-day-count day-count'>{len(places)} activities</span>")
+        parts.append("</div>")
+
+        for place in places:
+            place_name = place.get('name', 'Activity')
+            place_time = place.get('time', 'Anytime')
+            place_desc = place.get('description', '')
+            place_cost = place.get('cost_estimate', '')
+            tag_label, tag_class = infer_activity_tag(place_name, place_desc)
+
+            parts.append("<div class='itin-place activity'>")
+            parts.append(f"<span class='itin-place-time activity-time'>{esc(place_time)}</span>")
+            parts.append("<div class='itin-place-main activity-info'>")
+            parts.append(f"<div class='itin-place-name activity-name'>{esc(place_name)}</div>")
+            parts.append(f"<p class='itin-place-desc activity-desc'>{esc(place_desc)}</p>")
+            parts.append(f"<span class='activity-tag {tag_class}'>{esc(tag_label)}</span>")
+            if place_cost:
+                parts.append(f"<span class='itin-place-cost'>Estimated: {esc(place_cost)}</span>")
+            parts.append("</div>")
+            parts.append("</div>")
+
         foods = day.get('food_recommendations', [])
         if foods:
-            html += "<div class='itin-food-section'><h4>🍽️ Where to Eat</h4>"
+            parts.append("<div class='itin-food-section'><h4>Where to Eat</h4>")
             for food in foods:
-                html += f"""<div class='itin-food'>
-                    <span class='itin-food-name'>{food.get('name', '')}</span>
-                    <span class='itin-food-meta'>{food.get('cuisine', '')} · {food.get('price_range', '')} · {food.get('meal', '')}</span>
-                </div>"""
-            html += "</div>"
+                meal = food.get('meal', 'Meal')
+                name = food.get('name', 'Restaurant')
+                cuisine = food.get('cuisine', '')
+                price_range = food.get('price_range', '')
+                meta = " · ".join([token for token in [cuisine, price_range] if token])
 
-        # Tips
+                parts.append("<div class='itin-food activity'>")
+                parts.append(f"<span class='itin-place-time activity-time'>{esc(meal)}</span>")
+                parts.append("<div class='itin-food-main activity-info'>")
+                parts.append(f"<div class='itin-food-name activity-name'>{esc(name)}</div>")
+                if meta:
+                    parts.append(f"<div class='itin-food-meta activity-desc'>{esc(meta)}</div>")
+                parts.append("<span class='activity-tag tag-food'>Food</span>")
+                parts.append("</div>")
+                parts.append("</div>")
+            parts.append("</div>")
+
         if day.get('tips'):
-            html += f"<div class='itin-day-tips'>💡 {day['tips']}</div>"
+            parts.append(f"<div class='itin-day-tips'>💡 {esc(day['tips'])}</div>")
 
-        html += "</div>"
+        parts.append("</section>")
 
-    # Budget breakdown
     budget = data.get('budget_breakdown', {})
     if budget:
-        html += "<div class='itin-budget'><h3>💰 Budget Breakdown</h3><div class='itin-budget-grid'>"
+        parts.append("<section class='itin-budget'><h3>Budget Breakdown</h3><div class='itin-budget-grid'>")
         for key, val in budget.items():
             label = key.replace('_', ' ').title()
-            html += f"<div class='itin-budget-item'><span class='itin-budget-label'>{label}</span><span class='itin-budget-value'>{val}</span></div>"
-        html += "</div></div>"
+            parts.append(
+                f"<div class='itin-budget-item'><span class='itin-budget-label'>{esc(label)}</span><span class='itin-budget-value'>{esc(val)}</span></div>"
+            )
+        parts.append("</div></section>")
 
-    # General tips
     tips = data.get('general_tips', [])
     if tips:
-        html += "<div class='itin-general-tips'><h3>📝 General Tips</h3><ul>"
+        parts.append("<section class='itin-general-tips'><h3>General Tips</h3><ul>")
         for tip in tips:
-            html += f"<li>{tip}</li>"
-        html += "</ul></div>"
+            parts.append(f"<li>{esc(tip)}</li>")
+        parts.append("</ul></section>")
 
-    html += "</div>"
-    return html
+    parts.append("</div>")
+    return "".join(parts)

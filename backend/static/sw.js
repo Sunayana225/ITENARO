@@ -1,8 +1,9 @@
 // ITENARO Service Worker - Enables offline mode for travelers
-const CACHE_NAME = 'itenaro-v3';
+const CACHE_NAME = 'itenaro-v4';
 const STATIC_ASSETS = [
     '/',
     '/static/styles.css',
+    '/static/index-redesign.css',
     '/static/scripts/script.js',
     '/static/scripts/firebase-config.js',
     '/static/scripts/firebase-auth.js',
@@ -12,10 +13,10 @@ const STATIC_ASSETS = [
     'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
     'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js',
     'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
-    'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap'
+    'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;700&display=swap'
 ];
 
-const DYNAMIC_CACHE = 'itenaro-dynamic-v3';
+const DYNAMIC_CACHE = 'itenaro-dynamic-v4';
 const OFFLINE_ITINERARY_URL = '/offline/last-itinerary.json';
 const OFFLINE_ITINERARY_META_URL = '/offline/last-itinerary-meta.json';
 

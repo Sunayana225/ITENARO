@@ -30,10 +30,19 @@ document.addEventListener("DOMContentLoaded", function () {
     let journalVersionHistory = [];
     let currentDayToReplan = null;
     let currentEvents = [];
+    let currentNearbyPlaces = [];
+    let nearbyRequestSignature = '';
+    let currentMapDay = 'all';
+    let showEventsLayer = true;
+    let showNearbyLayer = true;
     let itineraryMap = null; // Leaflet map instance
     let mapMarkers = []; // Store map markers
     let eventMarkers = []; // Store events markers
+    let nearbyMarkers = []; // Store nearby discovery markers
     let mapPolylines = []; // Store route lines
+    let budgetCategoryChart = null;
+    let budgetDailyChart = null;
+    const exchangeRatesByBase = {};
 
     const replanModal = document.getElementById("replanModal");
     const replanInstruction = document.getElementById("replanInstruction");
@@ -43,12 +52,17 @@ document.addEventListener("DOMContentLoaded", function () {
     const replanSubmitBtn = document.getElementById("replanSubmitBtn");
     const offlineBanner = document.getElementById("offlineBanner");
     const syncIndicator = document.getElementById("syncIndicator");
+    const itineraryTitle = document.getElementById("itineraryTitle");
+    const itineraryMetaPills = document.getElementById("itineraryMetaPills");
     const presenceStrip = document.getElementById("presenceStrip");
     const syncConflictBanner = document.getElementById("syncConflictBanner");
     const priceHintsBar = document.getElementById("priceHintsBar");
     const eventsPanel = document.getElementById("eventsPanel");
     const eventsList = document.getElementById("eventsList");
     const eventsCategoryFilter = document.getElementById("eventsCategoryFilter");
+    const toggleEventsLayer = document.getElementById("toggleEventsLayer");
+    const toggleNearbyLayer = document.getElementById("toggleNearbyLayer");
+    const refreshNearbyBtn = document.getElementById("refreshNearbyBtn");
     const journalBtn = document.getElementById("journalBtn");
     const journalPanel = document.getElementById("journalPanel");
     const closeJournalBtn = document.getElementById("closeJournalBtn");
@@ -69,9 +83,31 @@ document.addEventListener("DOMContentLoaded", function () {
 
     function updateSyncIndicator(label = "", timestamp = null) {
         if (!syncIndicator) return;
-        const ts = timestamp || new Date().toISOString();
-        const human = new Date(ts).toLocaleString();
-        syncIndicator.textContent = label ? `${label} · Last updated ${human}` : `Last updated ${human}`;
+
+        const normalized = String(label || '').toLowerCase();
+        let state = 'idle';
+        if (normalized.includes('sync')) {
+            state = 'synced';
+        } else if (normalized.includes('cache') || normalized.includes('offline')) {
+            state = 'cached';
+        } else if (normalized.includes('conflict') || normalized.includes('fail') || normalized.includes('error')) {
+            state = 'error';
+        }
+
+        syncIndicator.dataset.state = state;
+
+        const syncText = syncIndicator.querySelector('.sync-text');
+        const ts = timestamp || null;
+        const human = ts ? new Date(ts).toLocaleString() : '';
+        const display = label || 'Not synced yet';
+
+        if (syncText) {
+            syncText.textContent = display;
+        } else {
+            syncIndicator.textContent = display;
+        }
+
+        syncIndicator.title = human ? `Last updated ${human}` : 'Sync status';
     }
 
     function getOfflineItineraryKey() {
@@ -149,6 +185,7 @@ document.addEventListener("DOMContentLoaded", function () {
             currentItineraryRevision = Number(payload.revision || 1) || 1;
             renderItineraryMap(currentItineraryData);
             injectReplanButtons();
+            buildItineraryDayTabs();
 
             if (payload.destination && document.getElementById('destination')) {
                 document.getElementById('destination').value = payload.destination;
@@ -163,6 +200,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 document.getElementById('purpose').value = payload.purpose;
             }
 
+            updateItineraryHeaderMeta();
             updateSyncIndicator('Offline cache', payload.saved_at);
             return true;
         } catch (error) {
@@ -208,6 +246,187 @@ document.addEventListener("DOMContentLoaded", function () {
 
         delete requestOptions.forceJsonHeader;
         return fetch(url, requestOptions);
+    }
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function classifyBudgetTier(rawBudget) {
+        const budgetValue = parseBudgetInput(rawBudget);
+        if (!budgetValue) {
+            return 'Budget not set';
+        }
+        if (budgetValue < 1200) {
+            return 'Budget';
+        }
+        if (budgetValue < 3500) {
+            return 'Mid-range';
+        }
+        return 'Premium';
+    }
+
+    function parseBudgetInput(rawBudget) {
+        const budgetMatch = String(rawBudget || '').match(/[\d,]+(?:\.\d+)?/);
+        if (!budgetMatch) return 0;
+        const parsed = parseFloat(budgetMatch[0].replace(/,/g, ''));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function formatCurrencyValue(value, currency) {
+        const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+        const safeCurrency = String(currency || 'USD').toUpperCase();
+        try {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: safeCurrency,
+                maximumFractionDigits: 2,
+            }).format(safeValue);
+        } catch (_formatError) {
+            return `${safeCurrency} ${safeValue.toFixed(2)}`;
+        }
+    }
+
+    function updateItineraryHeaderMeta() {
+        const destination = String(document.getElementById('destination')?.value || '').trim();
+        const duration = String(document.getElementById('duration')?.value || '').trim();
+        const budget = String(document.getElementById('budget')?.value || '').trim();
+        const purpose = String(document.getElementById('purpose')?.value || '').trim();
+
+        if (itineraryTitle) {
+            itineraryTitle.textContent = destination || 'Your Personalized Itinerary';
+        }
+
+        if (!itineraryMetaPills) return;
+
+        const pills = [];
+        if (duration) pills.push({ icon: '📅', text: duration });
+        if (budget) pills.push({ icon: '💰', text: classifyBudgetTier(budget) });
+        if (purpose) pills.push({ icon: '🧭', text: purpose });
+
+        const preferencePreview = selectedPreferences.slice(0, 2);
+        if (preferencePreview.length) {
+            pills.push({ icon: '✨', text: preferencePreview.join(' • ') });
+        }
+
+        itineraryMetaPills.innerHTML = pills
+            .map(pill => `<span class="itinerary-meta-pill"><span>${pill.icon}</span><b>${escapeHtml(pill.text)}</b></span>`)
+            .join('');
+    }
+
+    function buildItineraryDayTabs(activeDay = 'all') {
+        const itineraryContent = document.getElementById('itinerary-content');
+        if (!itineraryContent) return;
+
+        const existingTabs = itineraryContent.querySelector('.itn-tabs');
+        if (existingTabs) {
+            existingTabs.remove();
+        }
+
+        const dayCards = Array.from(itineraryContent.querySelectorAll('.itin-day'));
+        if (!dayCards.length) return;
+
+        const tabsBar = document.createElement('div');
+        tabsBar.className = 'itn-tabs';
+
+        const tabButtons = [];
+        function addTab(label, dayValue) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'itn-tab';
+            button.dataset.day = String(dayValue);
+            button.textContent = label;
+            tabsBar.appendChild(button);
+            tabButtons.push(button);
+        }
+
+        addTab('All days', 'all');
+        dayCards.forEach((card, index) => {
+            const dayValue = String(card.dataset.dayNumber || index + 1);
+            addTab(`Day ${dayValue}`, dayValue);
+        });
+
+        function applyDayFilter(targetDay) {
+            const normalizedTarget = String(targetDay || 'all');
+            tabButtons.forEach(button => {
+                button.classList.toggle('active', button.dataset.day === normalizedTarget);
+            });
+
+            dayCards.forEach((card, index) => {
+                const dayValue = String(card.dataset.dayNumber || index + 1);
+                card.style.display = normalizedTarget === 'all' || normalizedTarget === dayValue ? 'block' : 'none';
+            });
+        }
+
+        tabButtons.forEach(button => {
+            button.addEventListener('click', function () {
+                applyDayFilter(this.dataset.day || 'all');
+            });
+        });
+
+        itineraryContent.prepend(tabsBar);
+
+        const requested = String(activeDay || 'all');
+        const exists = tabButtons.some(button => button.dataset.day === requested);
+        applyDayFilter(exists ? requested : 'all');
+    }
+
+    function renderItineraryErrorState(title, message, detail = '') {
+        const itineraryContent = document.getElementById('itinerary-content');
+        if (!itineraryContent) return;
+
+        const safeTitle = escapeHtml(title || "Couldn't generate your itinerary");
+        const safeMessage = escapeHtml(message || 'We hit an issue reaching our AI planner.');
+        const safeDetail = escapeHtml(detail || '');
+
+        itineraryContent.innerHTML = `
+            <div class="itn-error">
+                <div class="itn-error-icon">⚠</div>
+                <div class="itn-error-title">${safeTitle}</div>
+                <div class="itn-error-text">${safeMessage}</div>
+                ${safeDetail ? `<p class="itn-error-detail">${safeDetail}</p>` : ''}
+                <div class="itn-error-actions">
+                    <button type="button" class="err-btn-primary" data-error-action="retry">Try Again</button>
+                    <button type="button" class="err-btn-secondary" data-error-action="adjust">Adjust Preferences</button>
+                </div>
+            </div>
+        `;
+
+        const retryBtn = itineraryContent.querySelector('[data-error-action="retry"]');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', function () {
+                const button = document.getElementById('generateBtn');
+                if (button) button.click();
+            });
+        }
+
+        const adjustBtn = itineraryContent.querySelector('[data-error-action="adjust"]');
+        if (adjustBtn) {
+            adjustBtn.addEventListener('click', function () {
+                const stepFive = document.getElementById('step5');
+                if (stepFive) {
+                    currentStep = 5;
+                    document.querySelectorAll('.step').forEach(step => {
+                        step.style.display = 'none';
+                    });
+                    stepFive.style.display = 'block';
+                }
+                stepFive?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+        }
+    }
+
+    function getSelectedNearbyTypes() {
+        const selected = Array.from(document.querySelectorAll('.nearby-type-input:checked'))
+            .map(input => String(input.value || '').trim().toLowerCase())
+            .filter(Boolean);
+
+        return selected.length ? selected : ['restaurant', 'cafe', 'attraction'];
     }
 
     function hideSyncConflictBanner() {
@@ -322,10 +541,12 @@ document.addEventListener("DOMContentLoaded", function () {
             currentItineraryData = latest.itinerary_data;
             renderItineraryMap(currentItineraryData);
             injectReplanButtons();
+            buildItineraryDayTabs();
             persistOfflineItinerary('Synced from server');
         }
 
         currentItineraryRevision = Number(latest.revision || currentItineraryRevision || 1) || 1;
+        updateItineraryHeaderMeta();
         updateSyncIndicator('Loaded latest shared version');
     }
 
@@ -436,6 +657,19 @@ document.addEventListener("DOMContentLoaded", function () {
         // Ignore malformed cache values and continue normal flow.
     }
 
+    updateItineraryHeaderMeta();
+
+    ['destination', 'budget', 'duration'].forEach(fieldId => {
+        const field = document.getElementById(fieldId);
+        if (!field) return;
+        field.addEventListener('input', updateItineraryHeaderMeta);
+    });
+
+    const purposeField = document.getElementById('purpose');
+    if (purposeField) {
+        purposeField.addEventListener('change', updateItineraryHeaderMeta);
+    }
+
     if (!navigator.onLine) {
         loadOfflineItineraryIfAvailable();
     }
@@ -467,10 +701,60 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    if (syncIndicator) {
+        syncIndicator.addEventListener('click', function () {
+            if (lastSavedItineraryId) {
+                syncSavedItineraryToServer('manual-sync-pill');
+            }
+        });
+    }
+
     if (eventsCategoryFilter) {
         eventsCategoryFilter.addEventListener('change', function () {
             renderEventsList();
-            showDayOnMap('all');
+            showDayOnMap(currentMapDay);
+        });
+    }
+
+    if (toggleEventsLayer) {
+        showEventsLayer = toggleEventsLayer.checked;
+        toggleEventsLayer.addEventListener('change', function () {
+            showEventsLayer = toggleEventsLayer.checked;
+            showDayOnMap(currentMapDay, { skipNearbyReload: true });
+        });
+    }
+
+    if (toggleNearbyLayer) {
+        showNearbyLayer = toggleNearbyLayer.checked;
+        toggleNearbyLayer.addEventListener('change', function () {
+            showNearbyLayer = toggleNearbyLayer.checked;
+            if (!showNearbyLayer) {
+                currentNearbyPlaces = [];
+                nearbyRequestSignature = '';
+                showDayOnMap(currentMapDay, { skipNearbyReload: true });
+                return;
+            }
+
+            loadNearbyFeed(currentMapDay, true);
+        });
+    }
+
+    document.querySelectorAll('.nearby-type-input').forEach(input => {
+        input.addEventListener('change', function () {
+            if (!showNearbyLayer) return;
+            nearbyRequestSignature = '';
+            loadNearbyFeed(currentMapDay, true);
+        });
+    });
+
+    if (refreshNearbyBtn) {
+        refreshNearbyBtn.addEventListener('click', function () {
+            if (!showNearbyLayer) {
+                alert('Enable the Nearby layer to refresh discovery spots.');
+                return;
+            }
+            nearbyRequestSignature = '';
+            loadNearbyFeed(currentMapDay, true);
         });
     }
 
@@ -520,6 +804,7 @@ document.addEventListener("DOMContentLoaded", function () {
             } else {
                 selectedPreferences.push(value);
             }
+            updateItineraryHeaderMeta();
         });
     });
 
@@ -586,7 +871,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!eventsPanel || !eventsList || !destination) return;
 
         try {
-            const response = await fetch(`/api/events-feed?destination=${encodeURIComponent(destination)}`);
+            const params = new URLSearchParams({ destination });
+            const response = await fetch(`/api/events-feed?${params.toString()}`);
             const payload = await response.json();
             if (!response.ok) {
                 throw new Error(payload.error || 'Failed to load events');
@@ -596,7 +882,7 @@ document.addEventListener("DOMContentLoaded", function () {
             renderEventsList();
             eventsPanel.style.display = currentEvents.length ? 'block' : 'none';
             if (itineraryMap && currentItineraryData) {
-                showDayOnMap('all');
+                showDayOnMap(currentMapDay);
             }
         } catch (error) {
             console.error('Events feed error:', error);
@@ -628,13 +914,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
         eventsList.innerHTML = filteredEvents.map((event, idx) => `
             <div class="event-card">
-                <h4>${event.name || 'Event'}</h4>
-                <div class="event-meta">${event.start_time || 'TBD'} · ${event.venue || 'Venue TBA'}</div>
-                <div class="event-meta">Category: ${event.category || 'other'}${event.price_hint ? ` · ${event.price_hint}` : ''}</div>
-                ${event.url ? `<div class="event-meta"><a href="${event.url}" target="_blank" rel="noopener noreferrer">Open tickets</a></div>` : ''}
+                <h4>${escapeHtml(event.name || 'Event')}</h4>
+                <div class="event-meta">${escapeHtml(event.start_time || 'TBD')} · ${escapeHtml(event.venue || 'Venue TBA')}</div>
+                <div class="event-meta">Category: ${escapeHtml(event.category || 'other')}${event.price_hint ? ` · ${escapeHtml(event.price_hint)}` : ''}</div>
+                ${event.url ? `<div class="event-meta"><a href="${escapeHtml(event.url)}" target="_blank" rel="noopener noreferrer">Open tickets</a></div>` : ''}
                 <div class="event-actions">
                     <select id="event-day-select-${idx}">${dayOptions}</select>
-                    <button type="button" data-event-index="${idx}" class="event-add-btn">Add</button>
+                    <button type="button" data-event-index="${idx}" data-event-id="${encodeURIComponent(String(event.id || `event-${idx}`))}" class="event-add-btn">Add</button>
                 </div>
             </div>
         `).join('');
@@ -642,7 +928,10 @@ document.addEventListener("DOMContentLoaded", function () {
         eventsList.querySelectorAll('.event-add-btn').forEach(button => {
             button.addEventListener('click', async function () {
                 const eventIndex = parseInt(this.dataset.eventIndex, 10);
-                await addEventToItinerary(eventIndex);
+                const daySelect = document.getElementById(`event-day-select-${eventIndex}`);
+                const dayNumber = parseInt(daySelect?.value || '1', 10);
+                const decodedId = decodeURIComponent(String(this.dataset.eventId || ''));
+                await addEventToItineraryById(decodedId, dayNumber);
             });
         });
     }
@@ -667,6 +956,8 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             injectReplanButtons();
+            buildItineraryDayTabs();
+            updateItineraryHeaderMeta();
             persistOfflineItinerary('Updated');
             if (lastSavedItineraryId) {
                 await syncSavedItineraryToServer('update-from-ui');
@@ -677,17 +968,29 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     async function addEventToItinerary(eventIndex) {
-        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) {
-            alert('Generate an itinerary first before adding events.');
-            return;
-        }
-
         const filteredEvents = getFilteredEvents();
         const event = filteredEvents[eventIndex];
         if (!event) return;
 
         const daySelect = document.getElementById(`event-day-select-${eventIndex}`);
         const dayNumber = parseInt(daySelect?.value || event.day_suggestion || 1, 10);
+
+        await addEventToItineraryById(String(event.id || ''), dayNumber);
+    }
+
+    async function addEventToItineraryById(eventId, preferredDay = null) {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) {
+            alert('Generate an itinerary first before adding events.');
+            return;
+        }
+
+        const event = currentEvents.find(item => String(item.id || '') === String(eventId || ''));
+        if (!event) {
+            alert('Event is no longer available. Try refreshing events.');
+            return;
+        }
+
+        const dayNumber = parseInt(preferredDay || event.day_suggestion || 1, 10);
 
         const targetDay = currentItineraryData.days.find(day => parseInt(day.day, 10) === dayNumber);
         if (!targetDay) {
@@ -709,6 +1012,58 @@ document.addEventListener("DOMContentLoaded", function () {
         renderItineraryMap(currentItineraryData);
         highlightReplannedDay(dayNumber);
     }
+
+    async function addNearbyPlaceToItineraryById(placeId, preferredDay = null) {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) {
+            alert('Generate an itinerary first before adding nearby places.');
+            return;
+        }
+
+        const nearbyPlace = currentNearbyPlaces.find(item => String(item.id || '') === String(placeId || ''));
+        if (!nearbyPlace) {
+            alert('Nearby place is no longer available. Refresh nearby results and try again.');
+            return;
+        }
+
+        const dayNumber = parseInt(preferredDay || nearbyPlace.day_suggestion || 1, 10);
+        const targetDay = currentItineraryData.days.find(day => parseInt(day.day, 10) === dayNumber);
+        if (!targetDay) {
+            alert('Selected day not found in itinerary.');
+            return;
+        }
+
+        const labelByType = {
+            restaurant: 'Meal stop',
+            cafe: 'Coffee break',
+            attraction: 'Sightseeing',
+        };
+
+        targetDay.places = targetDay.places || [];
+        targetDay.places.push({
+            name: nearbyPlace.name || 'Nearby Place',
+            time: labelByType[nearbyPlace.type] || 'Free time',
+            description: nearbyPlace.nearest_stop
+                ? `Visit ${nearbyPlace.name || 'this place'} near ${nearbyPlace.nearest_stop}.`
+                : `Explore ${nearbyPlace.name || 'this nearby place'}.`,
+            cost_estimate: nearbyPlace.type === 'attraction' ? 'Varies' : 'On demand',
+            lat: nearbyPlace.lat,
+            lng: nearbyPlace.lng,
+        });
+
+        await refreshItineraryHtmlFromData();
+        renderItineraryMap(currentItineraryData);
+        highlightReplannedDay(dayNumber);
+    }
+
+    window.addMapEventToItinerary = async function (encodedEventId, dayNumber) {
+        const eventId = decodeURIComponent(String(encodedEventId || ''));
+        await addEventToItineraryById(eventId, dayNumber);
+    };
+
+    window.addNearbyPlaceToItinerary = async function (encodedPlaceId, dayNumber) {
+        const placeId = decodeURIComponent(String(encodedPlaceId || ''));
+        await addNearbyPlaceToItineraryById(placeId, dayNumber);
+    };
 
     function getJournalDefaultTitle() {
         const destination = (document.getElementById('destination')?.value || '').trim();
@@ -1257,8 +1612,27 @@ document.addEventListener("DOMContentLoaded", function () {
             let duration = document.getElementById("duration").value;
             let purpose = document.getElementById("purpose").value;
 
+            updateItineraryHeaderMeta();
+
             if (!destination || !budget || !duration || !purpose) {
                 alert("Please fill out all fields before generating the itinerary.");
+                return;
+            }
+
+            if (!Array.isArray(selectedPreferences) || selectedPreferences.length === 0) {
+                const itineraryContent = document.getElementById("itinerary-content");
+                const itinerarySection = document.getElementById("itinerary");
+                if (itinerarySection) {
+                    itinerarySection.style.display = "block";
+                    itinerarySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                if (itineraryContent) {
+                    renderItineraryErrorState(
+                        'Choose at least one preference',
+                        'Pick one or more interests before generating your itinerary.',
+                        'Tip: use the Step 5 chips like Hiking, Museums, or Food Tours.'
+                    );
+                }
                 return;
             }
 
@@ -1293,7 +1667,9 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(data => {
                 if (itineraryContent) {
                     itineraryContent.innerHTML = data.itinerary;
+                    buildItineraryDayTabs();
                 }
+                updateItineraryHeaderMeta();
 
                 // Store structured data for map/export features
                 if (data.itinerary_data) {
@@ -1311,6 +1687,8 @@ document.addEventListener("DOMContentLoaded", function () {
                     }
                     renderItineraryMap(currentItineraryData);
                     injectReplanButtons();
+                    buildItineraryDayTabs();
+                    updateItineraryHeaderMeta();
                     persistOfflineItinerary('Generated');
 
                     if (journalTitleInput) {
@@ -1344,24 +1722,17 @@ document.addEventListener("DOMContentLoaded", function () {
                 if (itineraryContent) {
                     const errorMessage = error.message;
                     if (errorMessage.includes("quota") || errorMessage.includes("limit") || errorMessage.includes("429")) {
-                        itineraryContent.innerHTML = `
-                            <div style="text-align: center; padding: 30px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 12px; margin: 20px 0;">
-                                <div style="font-size: 48px; margin-bottom: 15px;">⏰</div>
-                                <h3 style="color: #856404; margin-bottom: 15px;">Rate Limit Reached</h3>
-                                <p style="color: #856404; margin-bottom: 10px;">We've reached the daily limit for AI-generated itineraries.</p>
-                                <p style="color: #856404; font-size: 14px; margin-bottom: 20px;">
-                                    <em>This helps us keep the service free for everyone!</em>
-                                </p>
-                            </div>
-                        `;
+                        renderItineraryErrorState(
+                            'Rate limit reached',
+                            'Your Gemini key is valid, but the current quota is exhausted. Try again later or add billing in Google AI Studio.',
+                            errorMessage
+                        );
                     } else {
-                        itineraryContent.innerHTML = `
-                            <div style="text-align: center; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; margin: 20px 0;">
-                                <h3 style="color: #721c24;">❌ Error Generating Itinerary</h3>
-                                <p style="color: #721c24;">We encountered an issue while creating your itinerary.</p>
-                                <p style="color: #721c24; font-size: 14px;">Please try again in a few moments.</p>
-                            </div>
-                        `;
+                        renderItineraryErrorState(
+                            "Couldn't generate your itinerary",
+                            'We hit an issue while creating your plan. Please retry in a few moments.',
+                            errorMessage
+                        );
                     }
                 }
             });
@@ -1371,6 +1742,137 @@ document.addEventListener("DOMContentLoaded", function () {
     // ============================================
     // INTERACTIVE MAP (Leaflet.js)
     // ============================================
+    function normalizeCoordinate(value) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function getStopsForNearby(dayNum) {
+        if (!currentItineraryData || !Array.isArray(currentItineraryData.days)) {
+            return [];
+        }
+
+        const parsedDay = dayNum === 'all' ? 'all' : parseInt(dayNum, 10);
+        const normalizedDayNum = parsedDay === 'all' || Number.isFinite(parsedDay) ? parsedDay : 'all';
+        const daysToInspect = normalizedDayNum === 'all'
+            ? currentItineraryData.days
+            : currentItineraryData.days.filter(day => parseInt(day.day, 10) === normalizedDayNum);
+
+        const seen = new Set();
+        const stops = [];
+
+        daysToInspect.forEach(day => {
+            const dayNumber = parseInt(day.day, 10) || 1;
+            (day.places || []).forEach(place => {
+                const lat = normalizeCoordinate(place.lat);
+                const lng = normalizeCoordinate(place.lng);
+                if (lat === null || lng === null) {
+                    return;
+                }
+
+                const dedupeKey = `${lat.toFixed(4)}:${lng.toFixed(4)}:${dayNumber}`;
+                if (seen.has(dedupeKey)) {
+                    return;
+                }
+                seen.add(dedupeKey);
+
+                stops.push({
+                    lat,
+                    lng,
+                    day: dayNumber,
+                    name: String(place.name || '').trim() || `Day ${dayNumber} stop`,
+                });
+            });
+        });
+
+        return stops.slice(0, 6);
+    }
+
+    async function loadNearbyFeed(dayNum = currentMapDay, forceRefresh = false) {
+        if (!itineraryMap || !currentItineraryData || !showNearbyLayer) {
+            return;
+        }
+
+        const selectedTypes = getSelectedNearbyTypes();
+        const stops = getStopsForNearby(dayNum);
+        if (!stops.length) {
+            currentNearbyPlaces = [];
+            nearbyRequestSignature = '';
+            showDayOnMap(dayNum, { skipNearbyReload: true });
+            return;
+        }
+
+        const signature = [
+            dayNum,
+            selectedTypes.join(','),
+            stops.map(stop => `${stop.day}-${stop.lat.toFixed(3)}-${stop.lng.toFixed(3)}`).join('|'),
+        ].join('::');
+
+        if (!forceRefresh && signature === nearbyRequestSignature) {
+            return;
+        }
+
+        nearbyRequestSignature = signature;
+
+        try {
+            const aggregated = [];
+            const seen = new Set();
+            const requests = stops.map(async stop => {
+                const params = new URLSearchParams({
+                    lat: stop.lat.toString(),
+                    lng: stop.lng.toString(),
+                    radius: '1800',
+                    limit: '8',
+                    types: selectedTypes.join(','),
+                });
+
+                const response = await fetch(`/api/nearby-feed?${params.toString()}`);
+                const payload = await response.json();
+                if (!response.ok) {
+                    return;
+                }
+
+                const places = Array.isArray(payload.places) ? payload.places : [];
+                places.forEach((place, index) => {
+                    const placeLat = normalizeCoordinate(place.lat);
+                    const placeLng = normalizeCoordinate(place.lng);
+                    if (placeLat === null || placeLng === null) {
+                        return;
+                    }
+
+                    const normalizedId = String(place.id || `nearby-${stop.day}-${index}`);
+                    const dedupeKey = `${normalizedId}:${stop.day}`;
+                    if (seen.has(dedupeKey)) {
+                        return;
+                    }
+                    seen.add(dedupeKey);
+
+                    aggregated.push({
+                        id: normalizedId,
+                        name: place.name || 'Nearby Place',
+                        type: String(place.type || 'attraction').toLowerCase(),
+                        lat: placeLat,
+                        lng: placeLng,
+                        distance_m: Number(place.distance_m || 0),
+                        day_suggestion: stop.day,
+                        nearest_stop: stop.name,
+                        source: place.source || payload.source || 'fallback',
+                        url: place.url || '',
+                    });
+                });
+            });
+
+            await Promise.all(requests);
+            aggregated.sort((a, b) => a.distance_m - b.distance_m);
+            currentNearbyPlaces = aggregated.slice(0, 24);
+            showDayOnMap(dayNum, { skipNearbyReload: true });
+        } catch (nearbyError) {
+            console.error('Nearby feed error:', nearbyError);
+            currentNearbyPlaces = [];
+            showDayOnMap(dayNum, { skipNearbyReload: true });
+        }
+    }
+
     function renderItineraryMap(data) {
         const mapSection = document.getElementById("mapSection");
         const mapContainer = document.getElementById("itineraryMap");
@@ -1380,7 +1882,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
         mapSection.style.display = "block";
 
-        // Initialize map if not already done
         if (itineraryMap) {
             itineraryMap.remove();
         }
@@ -1395,7 +1896,6 @@ document.addEventListener("DOMContentLoaded", function () {
             maxZoom: 18,
         }).addTo(itineraryMap);
 
-        // Build day filter buttons
         dayFilterBar.innerHTML = '';
         const allBtn = document.createElement('button');
         allBtn.className = 'day-filter-btn active';
@@ -1412,21 +1912,21 @@ document.addEventListener("DOMContentLoaded", function () {
             dayFilterBar.appendChild(btn);
         });
 
-        // Show all days initially
-        showDayOnMap('all');
+        const initialDay = currentMapDay === 'all' ? 'all' : parseInt(currentMapDay, 10);
+        showDayOnMap(Number.isFinite(initialDay) ? initialDay : 'all');
 
-        // Force map to redraw (fixes rendering in hidden containers)
         setTimeout(() => {
             itineraryMap.invalidateSize();
         }, 300);
     }
 
-    function showDayOnMap(dayNum) {
+    function showDayOnMap(dayNum, options = {}) {
         if (!itineraryMap || !currentItineraryData) return;
 
-        const normalizedDayNum = dayNum === 'all' ? 'all' : parseInt(dayNum, 10);
+        const parsedDay = dayNum === 'all' ? 'all' : parseInt(dayNum, 10);
+        const normalizedDayNum = parsedDay === 'all' || Number.isFinite(parsedDay) ? parsedDay : 'all';
+        currentMapDay = normalizedDayNum;
 
-        // Update filter button states
         document.querySelectorAll('.day-filter-btn').forEach(btn => {
             btn.classList.remove('active');
             if ((normalizedDayNum === 'all' && btn.textContent === 'All Days') ||
@@ -1435,12 +1935,13 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
 
-        // Clear existing markers and lines
-        mapMarkers.forEach(m => m.remove());
-        eventMarkers.forEach(m => m.remove());
-        mapPolylines.forEach(p => p.remove());
+        mapMarkers.forEach(marker => marker.remove());
+        eventMarkers.forEach(marker => marker.remove());
+        nearbyMarkers.forEach(marker => marker.remove());
+        mapPolylines.forEach(polyline => polyline.remove());
         mapMarkers = [];
         eventMarkers = [];
+        nearbyMarkers = [];
         mapPolylines = [];
 
         const bounds = [];
@@ -1448,20 +1949,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const daysToShow = normalizedDayNum === 'all'
             ? currentItineraryData.days
-            : currentItineraryData.days.filter(d => parseInt(d.day, 10) === normalizedDayNum);
+            : currentItineraryData.days.filter(day => parseInt(day.day, 10) === normalizedDayNum);
 
         daysToShow.forEach((day, dayIndex) => {
             const color = dayColors[dayIndex % dayColors.length];
             const dayPoints = [];
 
-            day.places.forEach((place, placeIndex) => {
-                if (!place.lat || !place.lng) return;
+            (day.places || []).forEach((place, placeIndex) => {
+                const lat = normalizeCoordinate(place.lat);
+                const lng = normalizeCoordinate(place.lng);
+                if (lat === null || lng === null) {
+                    return;
+                }
 
-                const latlng = [place.lat, place.lng];
+                const latlng = [lat, lng];
                 bounds.push(latlng);
                 dayPoints.push(latlng);
 
-                // Create numbered marker
                 const markerIcon = L.divIcon({
                     className: 'custom-map-marker',
                     html: `<div style="
@@ -1484,25 +1988,22 @@ document.addEventListener("DOMContentLoaded", function () {
                 });
 
                 const marker = L.marker(latlng, { icon: markerIcon }).addTo(itineraryMap);
-
-                // Popup content
                 const popupContent = `
                     <div class="map-popup-content">
-                        <h4>📍 ${place.name}</h4>
-                        <p class="popup-time">🕐 ${place.time || ''}</p>
-                        <p>${place.description || ''}</p>
-                        ${place.cost_estimate ? `<p>💰 ${place.cost_estimate}</p>` : ''}
+                        <h4>📍 ${escapeHtml(place.name || 'Stop')}</h4>
+                        <p class="popup-time">🕐 ${escapeHtml(place.time || '')}</p>
+                        <p>${escapeHtml(place.description || '')}</p>
+                        ${place.cost_estimate ? `<p>💰 ${escapeHtml(place.cost_estimate)}</p>` : ''}
                         <p style="color: ${color}; font-weight: 600; margin-top: 4px;">Day ${day.day}</p>
                     </div>
                 `;
-                marker.bindPopup(popupContent, { maxWidth: 280 });
+                marker.bindPopup(popupContent, { maxWidth: 300 });
                 mapMarkers.push(marker);
             });
 
-            // Draw route line for the day
             if (dayPoints.length > 1) {
                 const polyline = L.polyline(dayPoints, {
-                    color: color,
+                    color,
                     weight: 3,
                     opacity: 0.7,
                     dashArray: '8, 6',
@@ -1512,11 +2013,20 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
 
-        renderEventMarkers(normalizedDayNum, bounds);
+        if (showEventsLayer) {
+            renderEventMarkers(normalizedDayNum, bounds);
+        }
 
-        // Fit map to bounds
+        if (showNearbyLayer) {
+            renderNearbyMarkers(normalizedDayNum, bounds);
+        }
+
         if (bounds.length > 0) {
             itineraryMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+        }
+
+        if (!options.skipNearbyReload && showNearbyLayer) {
+            loadNearbyFeed(normalizedDayNum, false);
         }
     }
 
@@ -1526,23 +2036,25 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         const filteredByCategory = getFilteredEvents();
-        filteredByCategory.forEach(event => {
-            const daySuggestion = parseInt(event.day_suggestion, 10);
+        filteredByCategory.forEach((event, eventIndex) => {
+            const daySuggestion = parseInt(event.day_suggestion, 10) || 1;
             if (dayNum !== 'all' && daySuggestion && daySuggestion !== dayNum) {
                 return;
             }
 
-            if (typeof event.lat !== 'number' || typeof event.lng !== 'number') {
+            const lat = normalizeCoordinate(event.lat);
+            const lng = normalizeCoordinate(event.lng);
+            if (lat === null || lng === null) {
                 return;
             }
 
-            const latlng = [event.lat, event.lng];
+            const latlng = [lat, lng];
             bounds.push(latlng);
 
             const icon = L.divIcon({
                 className: 'event-map-marker',
                 html: `<div style="
-                    background: #16a085;
+                    background: #0ea5e9;
                     color: white;
                     width: 26px;
                     height: 26px;
@@ -1559,17 +2071,84 @@ document.addEventListener("DOMContentLoaded", function () {
                 popupAnchor: [0, -14],
             });
 
+            const encodedEventId = encodeURIComponent(String(event.id || `event-${eventIndex}`));
+            const targetDay = dayNum === 'all' ? daySuggestion : (Number.isFinite(Number(dayNum)) ? Number(dayNum) : daySuggestion);
+
             const marker = L.marker(latlng, { icon }).addTo(itineraryMap);
             marker.bindPopup(`
                 <div class="map-popup-content">
-                    <h4>🎟️ ${event.name || 'Local Event'}</h4>
-                    <p>🗓️ ${event.start_time || 'TBD'}</p>
-                    <p>📍 ${event.venue || 'Venue TBA'}</p>
-                    ${event.url ? `<p><a href="${event.url}" target="_blank" rel="noopener noreferrer">Open event</a></p>` : ''}
+                    <h4>🎟️ ${escapeHtml(event.name || 'Local Event')}</h4>
+                    <p>🗓️ ${escapeHtml(event.start_time || 'TBD')}</p>
+                    <p>📍 ${escapeHtml(event.venue || 'Venue TBA')}</p>
+                    ${event.url ? `<p><a href="${escapeHtml(event.url)}" target="_blank" rel="noopener noreferrer">Open event</a></p>` : ''}
+                    <button type="button" class="map-popup-action" onclick="window.addMapEventToItinerary('${encodedEventId}', ${targetDay})">Add to Itinerary</button>
                 </div>
             `, { maxWidth: 280 });
 
             eventMarkers.push(marker);
+        });
+    }
+
+    function renderNearbyMarkers(dayNum, bounds) {
+        if (!itineraryMap || !Array.isArray(currentNearbyPlaces) || currentNearbyPlaces.length === 0) {
+            return;
+        }
+
+        const typeStyles = {
+            restaurant: { color: '#ef4444', emoji: '🍽️', label: 'Restaurant' },
+            cafe: { color: '#f59e0b', emoji: '☕', label: 'Cafe' },
+            attraction: { color: '#8b5cf6', emoji: '⭐', label: 'Attraction' },
+        };
+
+        currentNearbyPlaces.forEach((place, placeIndex) => {
+            const placeDay = parseInt(place.day_suggestion, 10) || 1;
+            if (dayNum !== 'all' && placeDay !== dayNum) {
+                return;
+            }
+
+            const lat = normalizeCoordinate(place.lat);
+            const lng = normalizeCoordinate(place.lng);
+            if (lat === null || lng === null) {
+                return;
+            }
+
+            const style = typeStyles[place.type] || typeStyles.attraction;
+            const latlng = [lat, lng];
+            bounds.push(latlng);
+
+            const icon = L.divIcon({
+                className: 'nearby-map-marker',
+                html: `<div style="
+                    background: ${style.color};
+                    color: #fff;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border: 2px solid #fff;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+                    font-size: 12px;
+                ">${style.emoji}</div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+                popupAnchor: [0, -12],
+            });
+
+            const encodedPlaceId = encodeURIComponent(String(place.id || `nearby-${placeIndex}`));
+            const marker = L.marker(latlng, { icon }).addTo(itineraryMap);
+            marker.bindPopup(`
+                <div class="map-popup-content">
+                    <h4>${style.emoji} ${escapeHtml(place.name || 'Nearby Place')}</h4>
+                    <p>📌 ${style.label}${place.distance_m ? ` · ${escapeHtml(`${place.distance_m}m`)}` : ''}</p>
+                    ${place.nearest_stop ? `<p>Near ${escapeHtml(place.nearest_stop)}</p>` : ''}
+                    ${place.url ? `<p><a href="${escapeHtml(place.url)}" target="_blank" rel="noopener noreferrer">Open map</a></p>` : ''}
+                    <button type="button" class="map-popup-action" onclick="window.addNearbyPlaceToItinerary('${encodedPlaceId}', ${placeDay})">Add to Itinerary</button>
+                </div>
+            `, { maxWidth: 280 });
+
+            nearbyMarkers.push(marker);
         });
     }
 
@@ -2314,6 +2893,43 @@ document.addEventListener("DOMContentLoaded", function () {
     const currencyPanel = document.getElementById("currencyPanel");
     let exchangeRates = null;
 
+    async function getExchangeRatesForBase(base = 'USD') {
+        const normalizedBase = String(base || 'USD').toUpperCase();
+        if (exchangeRatesByBase[normalizedBase]) {
+            return exchangeRatesByBase[normalizedBase];
+        }
+
+        const response = await fetch(`/api/exchange-rates?base=${encodeURIComponent(normalizedBase)}`);
+        const payload = await response.json();
+        if (!response.ok || !payload.rates) {
+            throw new Error(payload.error || `Failed to load rates for ${normalizedBase}`);
+        }
+
+        exchangeRatesByBase[normalizedBase] = payload;
+        return payload;
+    }
+
+    async function convertAmount(amount, fromCurrency, toCurrency) {
+        const source = String(fromCurrency || 'USD').toUpperCase();
+        const target = String(toCurrency || 'USD').toUpperCase();
+        const safeAmount = Number.isFinite(Number(amount)) ? Number(amount) : 0;
+
+        if (source === target) {
+            return safeAmount;
+        }
+
+        try {
+            const ratesPayload = await getExchangeRatesForBase(source);
+            const rate = Number(ratesPayload.rates?.[target]);
+            if (!Number.isFinite(rate) || rate <= 0) {
+                return safeAmount;
+            }
+            return safeAmount * rate;
+        } catch (_rateError) {
+            return safeAmount;
+        }
+    }
+
     if (currencyBtn) {
         currencyBtn.addEventListener("click", function () {
             currencyPanel.style.display = "block";
@@ -2333,8 +2949,7 @@ document.addEventListener("DOMContentLoaded", function () {
         resultDiv.innerHTML = '<span style="color:#aaa;">Loading rates...</span>';
 
         try {
-            const resp = await fetch("/api/exchange-rates?base=USD");
-            exchangeRates = await resp.json();
+            exchangeRates = await getExchangeRatesForBase('USD');
             convertCurrency(); // Auto-convert on load
         } catch (error) {
             resultDiv.innerHTML = '<span style="color:#e74c3c;">Failed to load rates</span>';
@@ -2389,7 +3004,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const budgetBtn = document.getElementById("budgetBtn");
     const closeBudgetBtn = document.getElementById("closeBudgetBtn");
     const budgetPanel = document.getElementById("budgetPanel");
-    let budgetChart = null;
+    const budgetDisplayCurrencySelect = document.getElementById("budgetDisplayCurrency");
+    const expenseCurrencySelect = document.getElementById("expenseCurrency");
+
+    function getBudgetDisplayCurrency() {
+        return String(budgetDisplayCurrencySelect?.value || 'USD').toUpperCase();
+    }
 
     async function fetchExpensesFromApi() {
         const user = getCurrentUser();
@@ -2434,12 +3054,14 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
             }
 
-            const desc = document.getElementById("expenseDesc")?.value?.trim();
             const amount = parseFloat(document.getElementById("expenseAmount")?.value || 0);
             const category = document.getElementById("expenseCategory")?.value || 'other';
+            const note = document.getElementById("expenseNote")?.value?.trim() || '';
+            const expenseCurrency = String(expenseCurrencySelect?.value || getBudgetDisplayCurrency() || 'USD').toUpperCase();
+            const description = note || `${category.charAt(0).toUpperCase() + category.slice(1)} expense`;
 
-            if (!desc || !amount || amount <= 0) {
-                alert("Please enter a description and valid amount.");
+            if (!amount || amount <= 0) {
+                alert("Please enter a valid amount.");
                 return;
             }
 
@@ -2448,9 +3070,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     method: 'POST',
                     body: JSON.stringify({
                         category,
-                        description: desc,
+                        description,
                         amount,
-                        currency: 'USD',
+                        currency: expenseCurrency,
                         date: new Date().toISOString().split('T')[0]
                     })
                 });
@@ -2460,12 +3082,30 @@ document.addEventListener("DOMContentLoaded", function () {
                     throw new Error(payload.error || 'Failed to add expense');
                 }
 
-                document.getElementById("expenseDesc").value = '';
                 document.getElementById("expenseAmount").value = '';
+                document.getElementById("expenseNote").value = '';
                 await loadAndRenderBudgetTracker();
+                document.getElementById("expenseAmount")?.focus();
             } catch (error) {
                 alert(`Could not add expense: ${error.message}`);
             }
+        });
+    }
+
+    ['expenseAmount', 'expenseNote'].forEach(id => {
+        const field = document.getElementById(id);
+        if (!field) return;
+        field.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                addExpenseBtn?.click();
+            }
+        });
+    });
+
+    if (budgetDisplayCurrencySelect) {
+        budgetDisplayCurrencySelect.addEventListener('change', function () {
+            loadAndRenderBudgetTracker();
         });
     }
 
@@ -2477,7 +3117,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         try {
             const data = await fetchExpensesFromApi();
-            renderBudgetTracker(data.expenses || []);
+            await renderBudgetTracker(data.expenses || []);
         } catch (error) {
             if (expensesList) {
                 expensesList.innerHTML = `<p style="text-align:center;color:#e74c3c;padding:20px;">${error.message}</p>`;
@@ -2485,82 +3125,207 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    function renderBudgetTracker(expenses) {
+    async function renderBudgetTracker(expenses) {
+        const displayCurrency = getBudgetDisplayCurrency();
         const budgetInput = document.getElementById("budget")?.value || '';
+        const budgetAmountUsd = parseBudgetInput(budgetInput);
+        const budgetAmountConverted = await convertAmount(budgetAmountUsd, 'USD', displayCurrency);
 
-        // Parse budget (extract number)
-        let budgetAmount = 0;
-        const budgetMatch = budgetInput.match(/[\d,]+/);
-        if (budgetMatch) {
-            budgetAmount = parseFloat(budgetMatch[0].replace(/,/g, ''));
-        }
+        const normalizedExpenses = await Promise.all((expenses || []).map(async expense => {
+            const sourceCurrency = String(expense.currency || 'USD').toUpperCase();
+            const sourceAmount = Number(expense.amount || 0);
+            const convertedAmount = await convertAmount(sourceAmount, sourceCurrency, displayCurrency);
+            return {
+                ...expense,
+                sourceCurrency,
+                sourceAmount,
+                convertedAmount,
+            };
+        }));
 
-        // Calculate totals
-        const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-        const remaining = budgetAmount - total;
+        const total = normalizedExpenses.reduce((sum, expense) => sum + expense.convertedAmount, 0);
+        const remaining = budgetAmountConverted - total;
 
-        // Update summary cards
         const totalSpent = document.getElementById("budgetTotalSpent");
         const budgetLimit = document.getElementById("budgetLimit");
         const budgetRemaining = document.getElementById("budgetRemaining");
 
-        if (totalSpent) totalSpent.textContent = `$${total.toFixed(2)}`;
-        if (budgetLimit) budgetLimit.textContent = budgetAmount > 0 ? `$${budgetAmount.toFixed(2)}` : 'Not set';
+        if (totalSpent) totalSpent.textContent = formatCurrencyValue(total, displayCurrency);
+        if (budgetLimit) budgetLimit.textContent = budgetAmountUsd > 0 ? formatCurrencyValue(budgetAmountConverted, displayCurrency) : 'Not set';
         if (budgetRemaining) {
-            budgetRemaining.textContent = budgetAmount > 0 ? `$${remaining.toFixed(2)}` : '—';
+            budgetRemaining.textContent = budgetAmountUsd > 0 ? formatCurrencyValue(remaining, displayCurrency) : '—';
             budgetRemaining.style.color = remaining < 0 ? '#e74c3c' : '#2ecc71';
         }
 
-        // Category breakdown
-        const categories = {};
+        const categories = {
+            food: 0,
+            transport: 0,
+            accommodation: 0,
+            activities: 0,
+            shopping: 0,
+            other: 0,
+        };
+
+        const dailyTotals = {};
         const catEmojis = { food: '🍽️', transport: '🚗', accommodation: '🏨', activities: '🎭', shopping: '🛍️', other: '📦' };
-        expenses.forEach(e => {
-            categories[e.category] = (categories[e.category] || 0) + e.amount;
+
+        normalizedExpenses.forEach(expense => {
+            const category = categories.hasOwnProperty(expense.category) ? expense.category : 'other';
+            categories[category] += expense.convertedAmount;
+
+            const dateKey = String(expense.date || '').trim() || new Date().toISOString().split('T')[0];
+            dailyTotals[dateKey] = (dailyTotals[dateKey] || 0) + expense.convertedAmount;
         });
 
-        // Render chart (only if Chart.js is loaded)
-        if (typeof Chart !== 'undefined' && Object.keys(categories).length > 0) {
-            const ctx = document.getElementById("budgetChart");
-            if (ctx) {
-                if (budgetChart) budgetChart.destroy();
-                budgetChart = new Chart(ctx, {
+        if (typeof Chart !== 'undefined') {
+            const categoryCtx = document.getElementById("budgetCategoryChart");
+            if (categoryCtx) {
+                const orderedCategories = ['food', 'transport', 'accommodation', 'activities', 'shopping', 'other'];
+                const colorMap = {
+                    food: '#f59e0b',
+                    transport: '#3b82f6',
+                    accommodation: '#ef4444',
+                    activities: '#8b5cf6',
+                    shopping: '#22c55e',
+                    other: '#94a3b8',
+                };
+
+                const chartLabels = [];
+                const chartValues = [];
+                const chartColors = [];
+
+                orderedCategories.forEach(category => {
+                    const value = categories[category] || 0;
+                    if (value <= 0) return;
+                    chartLabels.push(`${catEmojis[category] || '📦'} ${category.charAt(0).toUpperCase() + category.slice(1)}`);
+                    chartValues.push(value);
+                    chartColors.push(colorMap[category] || '#94a3b8');
+                });
+
+                if (!chartValues.length) {
+                    chartLabels.push('No expenses yet');
+                    chartValues.push(1);
+                    chartColors.push('#e5e7eb');
+                }
+
+                if (budgetCategoryChart) budgetCategoryChart.destroy();
+                budgetCategoryChart = new Chart(categoryCtx, {
                     type: 'doughnut',
                     data: {
-                        labels: Object.keys(categories).map(k => `${catEmojis[k] || '📦'} ${k.charAt(0).toUpperCase() + k.slice(1)}`),
+                        labels: chartLabels,
                         datasets: [{
-                            data: Object.values(categories),
-                            backgroundColor: ['#ffeaa7', '#dfe6e9', '#fab1a0', '#c3aed6', '#a8e6cf', '#f0f0f0'],
+                            data: chartValues,
+                            backgroundColor: chartColors,
                             borderWidth: 2,
                             borderColor: '#fff'
                         }]
                     },
                     options: {
                         responsive: true,
+                        maintainAspectRatio: true,
+                        cutout: '62%',
                         plugins: {
-                            legend: { position: 'bottom', labels: { padding: 16, font: { size: 13 } } }
+                            legend: { position: 'bottom', labels: { padding: 14, font: { size: 12 } } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function (context) {
+                                        const value = Number(context.parsed || 0);
+                                        return `${context.label}: ${formatCurrencyValue(value, displayCurrency)}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            const dailyCtx = document.getElementById("budgetDailyChart");
+            if (dailyCtx) {
+                const sortedDaily = Object.entries(dailyTotals)
+                    .sort((a, b) => a[0].localeCompare(b[0]));
+
+                const labels = sortedDaily.length ? sortedDaily.map(([date]) => date) : ['No expenses'];
+                const dailySpendValues = sortedDaily.length ? sortedDaily.map(([, amount]) => amount) : [0];
+
+                const datasets = [{
+                    type: 'bar',
+                    label: `Daily Spend (${displayCurrency})`,
+                    data: dailySpendValues,
+                    backgroundColor: '#3b82f6',
+                    borderRadius: 6,
+                    maxBarThickness: 44,
+                }];
+
+                if (budgetAmountUsd > 0) {
+                    datasets.push({
+                        type: 'line',
+                        label: `Total Budget (${displayCurrency})`,
+                        data: labels.map(() => budgetAmountConverted),
+                        borderColor: '#ef4444',
+                        borderDash: [7, 6],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0,
+                    });
+                }
+
+                if (budgetDailyChart) budgetDailyChart.destroy();
+                budgetDailyChart = new Chart(dailyCtx, {
+                    data: { labels, datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                grid: { display: false },
+                            },
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    callback: function (value) {
+                                        return formatCurrencyValue(Number(value), displayCurrency);
+                                    }
+                                }
+                            },
+                        },
+                        plugins: {
+                            legend: { position: 'bottom', labels: { boxWidth: 14 } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function (context) {
+                                        return `${context.dataset.label}: ${formatCurrencyValue(Number(context.parsed.y || context.parsed || 0), displayCurrency)}`;
+                                    }
+                                }
+                            }
                         }
                     }
                 });
             }
         }
 
-        // Render expenses list
         const expensesList = document.getElementById("expensesList");
         if (expensesList) {
-            if (expenses.length === 0) {
+            if (normalizedExpenses.length === 0) {
                 expensesList.innerHTML = '<p style="text-align:center;color:#aaa;padding:20px;">No expenses yet. Start tracking!</p>';
             } else {
-                expensesList.innerHTML = expenses.slice().reverse().map(e => `
+                expensesList.innerHTML = normalizedExpenses.map(expense => {
+                    const category = categories.hasOwnProperty(expense.category) ? expense.category : 'other';
+                    const originalAmountLabel = expense.sourceCurrency !== displayCurrency
+                        ? ` · ${escapeHtml(formatCurrencyValue(expense.sourceAmount, expense.sourceCurrency))} original`
+                        : '';
+
+                    return `
                     <div class="expense-item">
-                        <div class="expense-cat-icon expense-cat-${e.category}">${catEmojis[e.category] || '📦'}</div>
+                        <div class="expense-cat-icon expense-cat-${category}">${catEmojis[category] || '📦'}</div>
                         <div class="expense-info">
-                            <div class="expense-desc">${e.description}</div>
-                            <div class="expense-date">${e.date}</div>
+                            <div class="expense-desc">${escapeHtml(expense.description || 'Expense')}</div>
+                            <div class="expense-date">${escapeHtml(expense.date || '')}${originalAmountLabel}</div>
                         </div>
-                        <div class="expense-amount">$${e.amount.toFixed(2)}</div>
-                        <button class="expense-delete" onclick="deleteExpense(${e.id})" title="Delete">×</button>
+                        <div class="expense-amount">${escapeHtml(formatCurrencyValue(expense.convertedAmount, displayCurrency))}</div>
+                        <button class="expense-delete" onclick="deleteExpense(${expense.id})" title="Delete">×</button>
                     </div>
-                `).join('');
+                `;
+                }).join('');
             }
         }
     }

@@ -124,3 +124,43 @@ def test_events_feed_fallback_path(client, monkeypatch):
     assert body["source"] == "fallback"
     assert len(body["events"]) == 1
     assert body["events"][0]["category"] == "food"
+
+
+def test_nearby_feed_requires_coordinates(client):
+    response = client.get("/api/nearby-feed")
+
+    assert response.status_code == 400
+    assert "lat" in response.get_json()["error"].lower()
+
+
+def test_nearby_feed_returns_places(client, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_fetch_nearby_places",
+        lambda *_args, **_kwargs: (
+            [
+                {
+                    "id": "osm-node-1",
+                    "name": "Riverside Cafe",
+                    "type": "cafe",
+                    "lat": 12.9716,
+                    "lng": 77.5946,
+                    "distance_m": 420,
+                    "source": "overpass",
+                    "url": "https://www.openstreetmap.org/node/1",
+                }
+            ],
+            "overpass",
+        ),
+    )
+
+    response = client.get(
+        "/api/nearby-feed?lat=12.9716&lng=77.5946&types=restaurants,cafe&radius=1200&limit=5"
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["source"] == "overpass"
+    assert body["types"] == ["restaurant", "cafe"]
+    assert len(body["places"]) == 1
+    assert body["places"][0]["name"] == "Riverside Cafe"

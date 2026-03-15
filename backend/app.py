@@ -5,6 +5,7 @@ import logging
 import requests  # Import requests for weather API
 import random
 import string
+import math
 import sqlite3
 import time
 from functools import wraps
@@ -34,7 +35,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 # Load environment variables from project root .env (if present)
-load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'), override=True)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -43,6 +44,7 @@ logging.basicConfig(level=logging.INFO)
 
 # Load API keys from environment variables (REQUIRED - no fallbacks for security)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip() or "gemini-2.0-flash"
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID", "").strip()
 ALLOW_INSECURE_UID_HEADER = os.getenv("ALLOW_INSECURE_UID_HEADER", "false").lower() in ("1", "true", "yes")
@@ -66,7 +68,8 @@ if not WEATHER_API_KEY:
     raise ValueError("WEATHER_API_KEY environment variable is required")
 # Configure Gemini AI
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-pro-latest")  # Updated model name
+model = genai.GenerativeModel(GEMINI_MODEL)
+logging.info(f"Configured Gemini model: {GEMINI_MODEL}")
 
 # Rate limiting for Gemini API
 API_CALL_HISTORY = []
@@ -830,8 +833,8 @@ def generate_itinerary():
         prompt = generate_itinerary_prompt(destination, budget, duration, purpose, preferences)
         logging.info(f"Generated prompt (first 200 chars): {prompt[:200]}")
 
-        # Get the response from the Gemini API with retry logic
-        max_retries = 3
+        # Get the response from the Gemini API with lightweight retry logic
+        max_retries = 2
         itinerary_text = "No response from AI."
         for attempt in range(max_retries):
             try:
@@ -840,18 +843,22 @@ def generate_itinerary():
                 logging.info(f"Received response from Gemini API on attempt {attempt + 1}.")
                 break
             except Exception as api_error:
-                if "429" in str(api_error) or "quota" in str(api_error).lower():
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 15  # Progressive backoff: 15, 30, 45 seconds
-                        logging.warning(f"Rate limit hit, waiting {wait_time} seconds before retry {attempt + 2}")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        return jsonify({
-                            "error": "API quota exceeded. Please try again later. The free tier has limited requests per day."
-                        }), 429
-                else:
-                    raise api_error
+                api_error_text = str(api_error)
+                api_error_lower = api_error_text.lower()
+
+                if "429" in api_error_text or "quota" in api_error_lower or "resource_exhausted" in api_error_lower:
+                    logging.warning("Gemini quota/rate limit reached; returning immediate 429 to client.")
+                    return jsonify({
+                        "error": "Gemini quota exceeded. Please add billing or try again later."
+                    }), 429
+
+                if attempt < max_retries - 1:
+                    wait_time = 2 * (attempt + 1)
+                    logging.warning(f"Gemini call failed, retrying in {wait_time}s: {api_error_text}")
+                    time.sleep(wait_time)
+                    continue
+
+                raise api_error
 
         # Try to parse structured JSON for map data
         itinerary_data = parse_json_response(itinerary_text)
@@ -863,31 +870,11 @@ def generate_itinerary():
         error_message = str(e)
         logging.error(f"Error generating itinerary: {error_message}")
 
-        # Handle specific API errors
-        if "429" in error_message or "quota" in error_message.lower():
-            formatted_itinerary = """
-            <div style="text-align: center; padding: 20px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; margin: 20px 0;">
-                <h3 style="color: #856404;">⚠️ API Limit Reached</h3>
-                <p style="color: #856404; margin: 10px 0;">We've reached the daily limit for AI-generated itineraries.</p>
-                <p style="color: #856404; margin: 10px 0;"><strong>What you can do:</strong></p>
-                <ul style="color: #856404; text-align: left; max-width: 400px; margin: 0 auto;">
-                    <li>Try again in a few hours</li>
-                    <li>Use our destination guides in the meantime</li>
-                    <li>Browse popular destinations for inspiration</li>
-                </ul>
-                <p style="color: #856404; margin-top: 15px; font-size: 14px;">
-                    <em>This helps us keep the service free for everyone!</em>
-                </p>
-            </div>
-            """
-        else:
-            formatted_itinerary = f"""
-            <div style="text-align: center; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; margin: 20px 0;">
-                <h3 style="color: #721c24;">❌ Error Generating Itinerary</h3>
-                <p style="color: #721c24;">We encountered an issue while creating your itinerary.</p>
-                <p style="color: #721c24; font-size: 14px;">Please try again in a few moments.</p>
-            </div>
-            """
+        if "429" in error_message or "quota" in error_message.lower() or "resource_exhausted" in error_message.lower():
+            return jsonify({"error": "Gemini quota exceeded. Please add billing or try again later."}), 429
+
+        concise_error = (error_message or "Unknown itinerary generation error").strip().splitlines()[0][:260]
+        return jsonify({"error": f"Itinerary generation failed: {concise_error}"}), 500
 
     result = {"itinerary": formatted_itinerary}
     if itinerary_data:
@@ -1724,6 +1711,195 @@ def _fetch_ticketmaster_events(destination, start_date=None, end_date=None):
     except Exception as fetch_error:
         logging.warning(f"Ticketmaster fetch failed: {fetch_error}")
         return []
+
+
+def _normalize_nearby_types(raw_types):
+    """Normalize nearby layer categories to a supported canonical list."""
+    aliases = {
+        "restaurant": "restaurant",
+        "restaurants": "restaurant",
+        "food": "restaurant",
+        "cafe": "cafe",
+        "cafes": "cafe",
+        "coffee": "cafe",
+        "attraction": "attraction",
+        "attractions": "attraction",
+        "museum": "attraction",
+        "landmark": "attraction",
+    }
+
+    requested = []
+    for item in str(raw_types or "").split(','):
+        token = aliases.get(item.strip().lower())
+        if token and token not in requested:
+            requested.append(token)
+
+    return requested or ["restaurant", "cafe", "attraction"]
+
+
+def _haversine_distance_m(lat1, lng1, lat2, lng2):
+    """Return distance in meters between two coordinates."""
+    earth_radius_m = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * (math.sin(d_lambda / 2) ** 2)
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return earth_radius_m * c
+
+
+def _build_overpass_query(lat, lng, radius_m, nearby_types):
+    """Build an Overpass query for nearby discovery categories."""
+    type_fragments = []
+    if "restaurant" in nearby_types:
+        type_fragments.extend([
+            f'node["amenity"="restaurant"](around:{radius_m},{lat},{lng});',
+            f'way["amenity"="restaurant"](around:{radius_m},{lat},{lng});',
+            f'relation["amenity"="restaurant"](around:{radius_m},{lat},{lng});',
+        ])
+    if "cafe" in nearby_types:
+        type_fragments.extend([
+            f'node["amenity"="cafe"](around:{radius_m},{lat},{lng});',
+            f'way["amenity"="cafe"](around:{radius_m},{lat},{lng});',
+            f'relation["amenity"="cafe"](around:{radius_m},{lat},{lng});',
+        ])
+    if "attraction" in nearby_types:
+        type_fragments.extend([
+            f'node["tourism"~"attraction|museum|gallery|zoo|theme_park|viewpoint"](around:{radius_m},{lat},{lng});',
+            f'way["tourism"~"attraction|museum|gallery|zoo|theme_park|viewpoint"](around:{radius_m},{lat},{lng});',
+            f'relation["tourism"~"attraction|museum|gallery|zoo|theme_park|viewpoint"](around:{radius_m},{lat},{lng});',
+        ])
+
+    return "\n".join([
+        "[out:json][timeout:10];",
+        "(",
+        *type_fragments,
+        ");",
+        "out center tags;",
+    ])
+
+
+def _place_type_from_tags(tags):
+    """Infer a normalized place type from OSM tags."""
+    amenity = str(tags.get("amenity", "")).strip().lower()
+    if amenity == "restaurant":
+        return "restaurant"
+    if amenity == "cafe":
+        return "cafe"
+
+    tourism = str(tags.get("tourism", "")).strip().lower()
+    if tourism in {"attraction", "museum", "gallery", "zoo", "theme_park", "viewpoint"}:
+        return "attraction"
+
+    return "attraction"
+
+
+def _fetch_overpass_nearby_places(lat, lng, nearby_types, radius_m=1500, limit=18):
+    """Fetch nearby restaurants/cafes/attractions from OpenStreetMap Overpass."""
+    query = _build_overpass_query(lat, lng, radius_m, nearby_types)
+
+    try:
+        resp = requests.get(
+            "https://overpass-api.de/api/interpreter",
+            params={"data": query},
+            headers={"User-Agent": "ITENARO/1.0"},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return []
+
+        payload = resp.json()
+        places = []
+        seen = set()
+
+        for element in payload.get("elements", []):
+            tags = element.get("tags") or {}
+            place_type = _place_type_from_tags(tags)
+            if place_type not in nearby_types:
+                continue
+
+            raw_lat = element.get("lat")
+            raw_lng = element.get("lon")
+            if raw_lat is None or raw_lng is None:
+                center = element.get("center") or {}
+                raw_lat = center.get("lat")
+                raw_lng = center.get("lon")
+
+            if raw_lat is None or raw_lng is None:
+                continue
+
+            key = f"{element.get('type', 'node')}-{element.get('id')}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            place_lat = float(raw_lat)
+            place_lng = float(raw_lng)
+            distance_m = int(_haversine_distance_m(lat, lng, place_lat, place_lng))
+            name = str(tags.get("name") or "").strip() or f"Nearby {place_type.title()}"
+
+            places.append({
+                "id": f"osm-{key}",
+                "name": name,
+                "type": place_type,
+                "lat": place_lat,
+                "lng": place_lng,
+                "distance_m": distance_m,
+                "source": "overpass",
+                "osm_type": element.get("type", "node"),
+                "osm_id": element.get("id"),
+                "url": f"https://www.openstreetmap.org/{element.get('type', 'node')}/{element.get('id')}",
+            })
+
+        places.sort(key=lambda place: place.get("distance_m", 10**9))
+        return places[:limit]
+    except Exception as nearby_error:
+        logging.warning(f"Nearby overpass fetch failed: {nearby_error}")
+        return []
+
+
+def _generate_fallback_nearby_places(lat, lng, nearby_types, limit=18):
+    """Generate deterministic nearby recommendations when OSM APIs are unavailable."""
+    templates = {
+        "restaurant": ["Local Bistro", "Street Kitchen", "Regional Diner"],
+        "cafe": ["Sunrise Cafe", "Brew Corner", "Roastery House"],
+        "attraction": ["City Landmark", "Art Museum", "Riverfront Viewpoint"],
+    }
+
+    places = []
+    seed = int(abs(lat * 1000) + abs(lng * 1000)) % 11
+    idx = 0
+    for nearby_type in nearby_types:
+        for label in templates.get(nearby_type, []):
+            offset = (idx + 1) * 0.004
+            places.append({
+                "id": f"fallback-{nearby_type}-{idx + 1}",
+                "name": label,
+                "type": nearby_type,
+                "lat": lat + (offset if idx % 2 == 0 else -offset),
+                "lng": lng + ((offset / 2) if idx % 3 == 0 else -(offset / 2)),
+                "distance_m": 250 + (idx * 140) + seed,
+                "source": "fallback",
+                "url": "",
+            })
+            idx += 1
+
+    places.sort(key=lambda place: place.get("distance_m", 10**9))
+    return places[:limit]
+
+
+def _fetch_nearby_places(lat, lng, nearby_types, radius_m=1500, limit=18):
+    """Return nearby places from live OSM data with local fallback."""
+    live_places = _fetch_overpass_nearby_places(lat, lng, nearby_types, radius_m, limit)
+    if live_places:
+        return live_places, "overpass"
+
+    return _generate_fallback_nearby_places(lat, lng, nearby_types, limit), "fallback"
 
 
 def _extract_itinerary_highlights(itinerary_data, max_items=6):
@@ -4202,6 +4378,39 @@ def events_feed():
         "destination": destination,
         "source": source,
         "events": events,
+    })
+
+
+@app.route('/api/nearby-feed', methods=['GET'])
+def nearby_feed():
+    """Return nearby restaurants, cafes, and attractions for map discovery layers."""
+    lat_raw = request.args.get('lat')
+    lng_raw = request.args.get('lng')
+
+    if lat_raw is None or lng_raw is None:
+        return jsonify({"error": "lat and lng are required"}), 400
+
+    try:
+        lat = float(lat_raw)
+        lng = float(lng_raw)
+    except (TypeError, ValueError):
+        return jsonify({"error": "lat and lng must be valid decimal coordinates"}), 400
+
+    radius_m = _coerce_positive_int(request.args.get('radius')) or 1500
+    radius_m = max(300, min(radius_m, 5000))
+
+    limit = _coerce_positive_int(request.args.get('limit')) or 18
+    limit = max(3, min(limit, 40))
+
+    nearby_types = _normalize_nearby_types(request.args.get('types', ''))
+    places, source = _fetch_nearby_places(lat, lng, nearby_types, radius_m, limit)
+
+    return jsonify({
+        "source": source,
+        "center": {"lat": lat, "lng": lng},
+        "radius_m": radius_m,
+        "types": nearby_types,
+        "places": places,
     })
 
 if __name__ == '__main__':
